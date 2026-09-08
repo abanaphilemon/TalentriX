@@ -15,6 +15,7 @@ import AuthPage from './components/AuthPage.jsx';
 import HubDashboard from './pages/HubDashboard.jsx';
 import SeekerDashboard from './pages/SeekerDashboard.jsx';
 import EmployerDashboard from './pages/EmployerDashboard.jsx';
+import RegisterPage from './pages/RegisterPage.jsx';
 
 const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID || 'demo-client-id.apps.googleusercontent.com';
@@ -91,6 +92,9 @@ export default function App() {
                 </>
               }
             />
+
+            {/* Registration page — reached via a hub's unique link (e.g. /register?ref=abc123) */}
+            <Route path="/register" element={<RegisterPage />} />
 
             {/* Role-specific dashboards (blank placeholders) */}
             <Route

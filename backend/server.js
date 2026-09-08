@@ -283,9 +283,26 @@ app.get('/api/hub/link', authenticateToken, async (req, res) => {
       hub.hubRef = code;
       await hub.save();
     }
-    res.json({ hubRef: hubRefOrNull(hub), link: getHubLink(hubRefOrNull(hub)) });
+    const count = await User.countDocuments({ role: 'seeker', hubId: hub._id });
+    res.json({ hubRef: hubRefOrNull(hub), link: getHubLink(hubRefOrNull(hub)), count });
   } catch (error) {
     console.error('Hub link error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Hub: list seekers who registered through this hub's link
+app.get('/api/hub/seekers', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') {
+      return res.status(403).json({ message: 'Only hub accounts can access this' });
+    }
+    const seekers = await User.find({ role: 'seeker', hubId: req.user.userId })
+      .select('-password')
+      .sort({ createdAt: -1 });
+    res.json({ seekers: seekers.map(publicUser) });
+  } catch (error) {
+    console.error('Hub seekers error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

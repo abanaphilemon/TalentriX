@@ -62,12 +62,12 @@ export function AuthProvider({ children }) {
   const backToRoles = useCallback(() => setMode('role'), []);
 
   // Register with backend API
-  const registerWithEmail = useCallback(async ({ name, email, password }) => {
+  const registerWithEmail = useCallback(async ({ name, email, password, hubRef }) => {
     try {
       const res = await fetch(`${API_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role }),
+        body: JSON.stringify({ name, email, password, role, hubRef: hubRef || null }),
       });
 
       const data = await res.json();
