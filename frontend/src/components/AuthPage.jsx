@@ -214,9 +214,9 @@ export default function AuthPage() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 10 }}
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none"
+            className="fixed inset-0 z-[70] flex p-4 pointer-events-none overflow-y-auto"
           >
-            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-hidden grid md:grid-cols-2">
+            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-hidden grid md:grid-cols-2 m-auto">
               {/* ───── Left brand panel ───── */}
               <div className="relative bg-secondary text-tertiary p-8 md:p-10 hidden md:flex flex-col justify-between overflow-hidden">
                 {/* Decorative gold blobs */}

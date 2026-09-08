@@ -5,6 +5,8 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 const STORAGE = {
   token: 'tbai.token',
   role: 'tbai.role',
+  adminToken: 'tbai.adminToken',
+  adminRole: 'tbai.adminRole',
 };
 
 const AuthContext = createContext(null);
@@ -12,6 +14,8 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
+  const [adminUser, setAdminUser] = useState(null);
+  const [adminRole, setAdminRole] = useState(null);
   const [mode, setMode] = useState('closed');
   const [loading, setLoading] = useState(true);
 
@@ -19,22 +23,48 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const rehydrate = async () => {
       try {
-        const token = localStorage.getItem(STORAGE.token);
-        const savedRole = localStorage.getItem(STORAGE.role);
-
-        if (token && savedRole) {
-          setRole(savedRole);
-          // Fetch the full user profile from the backend
+        const validate = async (token) => {
           const res = await fetch(`${API_URL}/me`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (res.ok) {
             const data = await res.json();
-            setUser(data.user);
+            return data.user;
+          }
+          return null;
+        };
+
+        // Regular session (hub / seeker / employer)
+        const token = localStorage.getItem(STORAGE.token);
+        const savedRole = localStorage.getItem(STORAGE.role);
+        if (token && savedRole && savedRole !== 'admin') {
+          const u = await validate(token);
+          if (u) {
+            setUser(u);
+            setRole(savedRole);
           } else {
-            // Token invalid/expired → clear stored state
             localStorage.removeItem(STORAGE.token);
             localStorage.removeItem(STORAGE.role);
+          }
+        } else if (token && savedRole === 'admin') {
+          // Legacy admin session stored in the regular keys → migrate to its own keys
+          localStorage.removeItem(STORAGE.token);
+          localStorage.removeItem(STORAGE.role);
+          localStorage.setItem(STORAGE.adminToken, token);
+          localStorage.setItem(STORAGE.adminRole, savedRole);
+        }
+
+        // Admin session (separate keys so tabs stay independent)
+        const adminToken = localStorage.getItem(STORAGE.adminToken);
+        const adminRoleSaved = localStorage.getItem(STORAGE.adminRole);
+        if (adminToken && adminRoleSaved === 'admin') {
+          const u = await validate(adminToken);
+          if (u) {
+            setAdminUser(u);
+            setAdminRole('admin');
+          } else {
+            localStorage.removeItem(STORAGE.adminToken);
+            localStorage.removeItem(STORAGE.adminRole);
           }
         }
       } catch {
@@ -88,12 +118,13 @@ export function AuthProvider({ children }) {
   }, [role]);
 
   // Login with backend API
-  const loginWithEmail = useCallback(async ({ email, password }) => {
+  const loginWithEmail = useCallback(async ({ email, password, role: roleOverride }) => {
     try {
+      const roleParam = roleOverride || role;
       const res = await fetch(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, role }),
+        body: JSON.stringify({ email, password, role: roleParam }),
       });
 
       const data = await res.json();
@@ -126,9 +157,44 @@ export function AuthProvider({ children }) {
     setRole(null);
   }, []);
 
+  // Admin session is stored under separate keys so the admin panel and the
+  // public site never share auth state across tabs.
+  const adminLogin = useCallback(async ({ email, password }) => {
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role: 'admin' }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Login failed' };
+      }
+
+      localStorage.setItem(STORAGE.adminToken, data.token);
+      localStorage.setItem(STORAGE.adminRole, data.user.role);
+      setAdminUser(data.user);
+      setAdminRole(data.user.role);
+      return { ok: true, user: data.user };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, []);
+
+  const adminSignOut = useCallback(() => {
+    localStorage.removeItem(STORAGE.adminToken);
+    localStorage.removeItem(STORAGE.adminRole);
+    setAdminUser(null);
+    setAdminRole(null);
+  }, []);
+
   const value = {
     user,
     role,
+    adminUser,
+    adminRole,
     mode,
     loading,
     openAuth,
@@ -139,6 +205,8 @@ export function AuthProvider({ children }) {
     loginWithEmail,
     registerWithEmail,
     signOut,
+    adminLogin,
+    adminSignOut,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

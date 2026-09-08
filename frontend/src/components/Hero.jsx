@@ -1,8 +1,8 @@
 import { motion } from 'framer-motion';
 import { Suspense, lazy } from 'react';
 import { ArrowRight, Play, Sparkles } from 'lucide-react';
-import { heroStats, images } from '../data/content.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useContent } from '../context/ContentContext.jsx';
 
 // Lazy-load the 3D scene so the page becomes interactive before WebGL boots
 const HeroScene = lazy(() => import('./HeroScene.jsx'));
@@ -19,6 +19,9 @@ const fadeUp = {
 
 export default function Hero() {
   const { openAuth } = useAuth();
+  const { content } = useContent();
+  const hero = content.hero || {};
+  const heroStats = content.heroStats || [];
 
   return (
     <section
@@ -41,7 +44,7 @@ export default function Hero() {
             >
               <Sparkles className="w-4 h-4 text-primary" />
               <span className="text-xs font-semibold tracking-wide text-secondary">
-                AI-POWERED RECRUITMENT
+                {hero.badge || 'AI-POWERED RECRUITMENT'}
               </span>
             </motion.div>
 
@@ -52,10 +55,10 @@ export default function Hero() {
               custom={1}
               className="font-display text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.05] text-secondary"
             >
-              Hire{' '}
-              <span className="text-gradient-gold">extraordinary</span>
+              {hero.titlePrefix || 'Hire '}
+              <span className="text-gradient-gold">{hero.titleHighlight || 'extraordinary'}</span>
               <br />
-              talent, faster.
+              {hero.titleSuffix || 'talent, faster.'}
             </motion.h1>
 
             <motion.p
@@ -65,9 +68,7 @@ export default function Hero() {
               custom={2}
               className="mt-6 text-lg text-secondary/70 max-w-xl leading-relaxed"
             >
-              Talent Bridge AI matches you with pre-vetted candidates in
-              days, not months. Our models read beyond the resume — surfacing
-              people who truly fit your team.
+              {hero.subtitle || ''}
             </motion.p>
 
             <motion.div
@@ -78,12 +79,12 @@ export default function Hero() {
               className="mt-8 flex flex-wrap gap-4"
             >
               <button type="button" onClick={openAuth} className="btn-primary">
-                Get Started
+                {hero.ctaPrimary || 'Get Started'}
                 <ArrowRight className="w-4 h-4" />
               </button>
               <a href="#about" className="btn-secondary">
                 <Play className="w-4 h-4" />
-                See How It Works
+                {hero.ctaSecondary || 'See How It Works'}
               </a>
             </motion.div>
 
@@ -121,7 +122,7 @@ export default function Hero() {
               className="absolute inset-0 glass rounded-3xl overflow-hidden"
             >
               <img
-                src={images.hero}
+                src={hero.image}
                 alt="Team collaborating"
                 loading="lazy"
                 className="w-full h-full object-cover"

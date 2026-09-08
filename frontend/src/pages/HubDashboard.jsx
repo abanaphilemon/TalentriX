@@ -223,8 +223,8 @@ export default function HubDashboard() {
 
       {/* Seeker detail modal */}
       {viewing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-secondary/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl relative overflow-hidden">
+        <div className="fixed inset-0 z-50 flex p-4 bg-secondary/60 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl relative overflow-hidden m-auto">
             <div className="bg-secondary text-white p-6">
               <div className="flex items-center gap-4">
                 <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center">

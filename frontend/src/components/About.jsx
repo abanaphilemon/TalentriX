@@ -1,34 +1,19 @@
 import { motion } from 'framer-motion';
 import { useInView } from 'react-intersection-observer';
 import { Brain, Target, Zap, ShieldCheck } from 'lucide-react';
-import { images } from '../data/content.js';
+import { useContent } from '../context/ContentContext.jsx';
 
-const features = [
-  {
-    icon: Brain,
-    title: 'Smart Matching',
-    desc: 'LLM-powered models read résumés, projects, and culture cues to surface the right person.',
-  },
-  {
-    icon: Target,
-    title: 'Precision Sourcing',
-    desc: 'Reach passive candidates you\'d never find on traditional platforms.',
-  },
-  {
-    icon: Zap,
-    title: '10x Faster',
-    desc: 'Cut your time-to-hire by 80% with automated screening and ranking.',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'Bias Audited',
-    desc: 'Every model decision is logged and audited to keep hiring fair and explainable.',
-  },
-];
+const featureIcons = [Brain, Target, Zap, ShieldCheck];
 
 // About section — two-column with copy + image in a glass card
 export default function About() {
   const { ref, inView } = useInView({ triggerOnce: true, threshold: 0.2 });
+  const { content } = useContent();
+  const about = content.about || {};
+  const features = (content.features || []).map((f, i) => ({
+    ...f,
+    icon: featureIcons[i % featureIcons.length],
+  }));
 
   return (
     <section id="about" className="section-padding">
@@ -42,7 +27,7 @@ export default function About() {
               transition={{ duration: 0.5 }}
               className="inline-block text-xs font-bold tracking-widest text-secondary/60 uppercase mb-3"
             >
-              About Talent Bridge AI
+              {about.eyebrow || 'About Talent Bridge AI'}
             </motion.span>
 
             <motion.h2
@@ -51,9 +36,9 @@ export default function About() {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="font-display text-4xl md:text-5xl lg:text-6xl font-bold leading-tight text-secondary"
             >
-              Recruitment,{' '}
-              <span className="text-gradient-gold">reimagined</span> by humans
-              and machines.
+              {about.title || 'Recruitment, '}
+              <span className="text-gradient-gold">{about.titleHighlight || 'reimagined'}</span>
+              {about.titleSuffix || ' by humans and machines.'}
             </motion.h2>
 
             <motion.p
@@ -62,10 +47,7 @@ export default function About() {
               transition={{ duration: 0.6, delay: 0.2 }}
               className="mt-6 text-lg text-secondary/70 leading-relaxed"
             >
-              We built Talent Bridge AI because hiring the best people should
-              not be a privilege of the biggest companies. Our platform pairs
-              advanced language models with human recruiters to bring speed,
-              fairness, and clarity to every search.
+              {about.body || ''}
             </motion.p>
 
             {/* Feature grid */}
@@ -101,7 +83,7 @@ export default function About() {
           >
             <div className="glass rounded-3xl overflow-hidden p-3 shadow-2xl">
               <img
-                src={images.about}
+                src={about.image}
                 alt="AI and technology"
                 loading="lazy"
                 className="w-full h-[500px] object-cover rounded-2xl"

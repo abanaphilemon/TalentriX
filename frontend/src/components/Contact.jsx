@@ -12,7 +12,8 @@ import {
   Github,
   CheckCircle2,
 } from 'lucide-react';
-import { contactInfo } from '../data/content.js';
+
+import { useContent } from '../context/ContentContext.jsx';
 
 // Social icon helper
 const SocialBtn = ({ Icon, href, label }) => (
@@ -29,6 +30,9 @@ const SocialBtn = ({ Icon, href, label }) => (
 export default function Contact() {
   const { ref, inView } = useInView({ triggerOnce: true, threshold: 0.15 });
   const [submitted, setSubmitted] = useState(false);
+  const { content } = useContent();
+  const heading = content.contactHeading || {};
+  const contactInfo = content.contactInfo || {};
 
   const {
     register,
@@ -57,7 +61,7 @@ export default function Contact() {
             transition={{ duration: 0.5 }}
             className="inline-block text-xs font-bold tracking-widest text-secondary/60 uppercase mb-3"
           >
-            Get In Touch
+            {heading.eyebrow || 'Get In Touch'}
           </motion.span>
 
           <motion.h2
@@ -66,8 +70,8 @@ export default function Contact() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="font-display text-4xl md:text-5xl lg:text-6xl font-bold leading-tight text-secondary"
           >
-            Let&apos;s build your{' '}
-            <span className="text-gradient-gold">dream team.</span>
+            {heading.title || "Let's build your "}
+            <span className="text-gradient-gold">{heading.titleHighlight || 'dream team.'}</span>
           </motion.h2>
 
           <motion.p
@@ -76,8 +80,7 @@ export default function Contact() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="mt-4 text-lg text-secondary/70"
           >
-            Tell us what you&apos;re building — we&apos;ll be in touch within
-            one business day.
+            {heading.body || ''}
           </motion.p>
         </div>
 
@@ -257,8 +260,7 @@ export default function Contact() {
                     Office hours
                   </h4>
                   <p className="text-sm text-secondary/70 mt-1">
-                    Mon&Fri, 9am&6pm PST. We respond to every message within
-                    one business day.
+                    {heading.officeHours || ''}
                   </p>
                 </div>
               </div>

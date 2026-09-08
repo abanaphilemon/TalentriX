@@ -30,9 +30,9 @@ export default function RoleSelectModal() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 10 }}
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center p-4 pointer-events-none"
+            className="fixed inset-0 z-[70] flex p-4 pointer-events-none overflow-y-auto"
           >
-            <div className="glass rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-3xl pointer-events-auto relative">
+            <div className="glass rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-3xl pointer-events-auto relative m-auto">
               {/* Close */}
               <button
                 onClick={closeAuth}

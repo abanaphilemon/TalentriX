@@ -2,11 +2,13 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
+import { ContentProvider } from './context/ContentContext.jsx';
 import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
 import CtaSection from './components/CtaSection.jsx';
 import About from './components/About.jsx';
 import Testimonials from './components/Testimonials.jsx';
+import Reviews from './components/Reviews.jsx';
 import Collaborators from './components/Collaborators.jsx';
 import Contact from './components/Contact.jsx';
 import Footer from './components/Footer.jsx';
@@ -16,6 +18,8 @@ import HubDashboard from './pages/HubDashboard.jsx';
 import SeekerDashboard from './pages/SeekerDashboard.jsx';
 import EmployerDashboard from './pages/EmployerDashboard.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
+import AdminLoginPage from './pages/AdminLoginPage.jsx';
+import AdminDashboard from './pages/AdminDashboard.jsx';
 
 const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID || 'demo-client-id.apps.googleusercontent.com';
@@ -25,6 +29,7 @@ const DASHBOARDS = {
   hub: '/dashboard/hub',
   seeker: '/dashboard/seeker',
   employer: '/dashboard/employer',
+  admin: '/admin',
 };
 
 // Guard: redirects to the correct dashboard page for the logged-in role.
@@ -64,6 +69,7 @@ function LandingPage() {
         <CtaSection />
         <About />
         <Testimonials />
+        <Reviews />
         <Collaborators />
         <Contact />
       </main>
@@ -72,60 +78,87 @@ function LandingPage() {
   );
 }
 
+// Admin route — private URL. Uses its own session (independent from the
+// public-site login), so opening the landing page in another tab never syncs
+// with the admin panel.
+function AdminRoute() {
+  const { adminUser, adminRole, loading } = useAuth();
+
+  if (loading) return null;
+
+  if (adminUser && adminRole === 'admin') {
+    return <AdminDashboard />;
+  }
+
+  if (adminUser && adminRole !== 'admin') {
+    return <Navigate to="/" replace />;
+  }
+
+  return <AdminLoginPage />;
+}
+
 export default function App() {
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* Landing page */}
-            <Route
-              path="/"
-              element={
-                <>
-                  <LandingPage />
-                  {/* Two-step auth flow:
-                      1) RoleSelectModal — user picks hub/seeker/employer
-                      2) AuthPage         — modern login/register */}
-                  <RoleSelectModal />
-                  <AuthPage />
-                </>
-              }
-            />
+        <ContentProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* Landing page */}
+              <Route
+                path="/"
+                element={
+                  <>
+                    <LandingPage />
+                    {/* Two-step auth flow:
+                        1) RoleSelectModal — user picks hub/seeker/employer
+                        2) AuthPage         — modern login/register */}
+                    <RoleSelectModal />
+                    <AuthPage />
+                  </>
+                }
+              />
 
-            {/* Registration page — reached via a hub's unique link (e.g. /register?ref=abc123) */}
-            <Route path="/register" element={<RegisterPage />} />
+              {/* Registration page — reached via a hub's unique link (e.g. /register?ref=abc123) */}
+              <Route path="/register" element={<RegisterPage />} />
 
-            {/* Role-specific dashboards (blank placeholders) */}
-            <Route
-              path="/dashboard/hub"
-              element={
-                <RequireRole role="hub">
-                  <HubDashboard />
-                </RequireRole>
-              }
-            />
-            <Route
-              path="/dashboard/seeker"
-              element={
-                <RequireRole role="seeker">
-                  <SeekerDashboard />
-                </RequireRole>
-              }
-            />
-            <Route
-              path="/dashboard/employer"
-              element={
-                <RequireRole role="employer">
-                  <EmployerDashboard />
-                </RequireRole>
-              }
-            />
+              {/* Role-specific dashboards (blank placeholders) */}
+              <Route
+                path="/dashboard/hub"
+                element={
+                  <RequireRole role="hub">
+                    <HubDashboard />
+                  </RequireRole>
+                }
+              />
+              <Route
+                path="/dashboard/seeker"
+                element={
+                  <RequireRole role="seeker">
+                    <SeekerDashboard />
+                  </RequireRole>
+                }
+              />
+              <Route
+                path="/dashboard/employer"
+                element={
+                  <RequireRole role="employer">
+                    <EmployerDashboard />
+                  </RequireRole>
+                }
+              />
+              <Route
+                path="/admin"
+                element={
+                  <AdminRoute />
+                }
+              />
 
-            {/* Catch-all → landing */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
+              {/* Catch-all → landing */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </ContentProvider>
       </AuthProvider>
     </GoogleOAuthProvider>
   );

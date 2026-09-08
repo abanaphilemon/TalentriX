@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Sparkles, Send } from 'lucide-react';
-import { footerLinks } from '../data/content.js';
+import { useContent } from '../context/ContentContext.jsx';
 
 // Reusable link column heading
 const ColumnTitle = ({ children }) => (
@@ -11,6 +11,10 @@ const ColumnTitle = ({ children }) => (
 export default function Footer() {
   const [email, setEmail] = useState('');
   const [subscribed, setSubscribed] = useState(false);
+  const { content } = useContent();
+  const footer = content.footer || {};
+  const quickLinks = footer.quickLinks || [];
+  const resources = footer.resources || [];
 
   // Subscribe handler — just visual confirmation here
   const onSubscribe = (e) => {
@@ -38,16 +42,15 @@ export default function Footer() {
               </span>
             </div>
             <p className="text-sm text-white/60 leading-relaxed">
-              AI-powered recruitment that connects exceptional people with
-              the teams who need them.
+              {footer.brandTagline || ''}
             </p>
           </div>
 
           {/* ───── Quick links ───── */}
           <div>
-            <ColumnTitle>Quick Links</ColumnTitle>
+            <ColumnTitle>{footer.quickLinksTitle || 'Quick Links'}</ColumnTitle>
             <ul className="space-y-3">
-              {footerLinks.quick.map((l) => (
+              {quickLinks.map((l) => (
                 <li key={l.label}>
                   <a
                     href={l.href}
@@ -62,9 +65,9 @@ export default function Footer() {
 
           {/* ───── Resources ───── */}
           <div>
-            <ColumnTitle>Resources</ColumnTitle>
+            <ColumnTitle>{footer.resourcesTitle || 'Resources'}</ColumnTitle>
             <ul className="space-y-3">
-              {footerLinks.resources.map((l) => (
+              {resources.map((l) => (
                 <li key={l.label}>
                   <a
                     href={l.href}
@@ -81,7 +84,7 @@ export default function Footer() {
           <div>
             <ColumnTitle>Newsletter</ColumnTitle>
             <p className="text-sm text-white/60 mb-4">
-              Monthly insights on AI, hiring, and the future of work.
+              {footer.newsletterBlurb || ''}
             </p>
             <form onSubmit={onSubscribe} className="flex gap-2">
               <input

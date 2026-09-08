@@ -18,7 +18,14 @@ app.use(express.json());
 // MongoDB Connection
 const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/talentbridge';
 mongoose.connect(uri)
-.then(() => console.log('MongoDB connected'))
+.then(async () => {
+  console.log('MongoDB connected');
+  try {
+    await seedSite();
+  } catch (e) {
+    console.error('Seed error:', e.message);
+  }
+})
 .catch(err => console.error('MongoDB connection error:', err));
 
 // User Schema
@@ -26,7 +33,7 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['hub', 'seeker', 'employer'], required: true },
+  role: { type: String, enum: ['hub', 'seeker', 'employer', 'admin'], required: true },
 
   // Hub-specific: unique invite code used in the shared registration link
   hubRef: { type: String, default: null },
@@ -80,6 +87,152 @@ function publicUser(u) {
     createdAt: u.createdAt,
   };
 }
+
+const SiteContent = mongoose.model('SiteContent', new mongoose.Schema({
+  key: { type: String, default: 'landing' },
+  // Hero
+  hero: {
+    badge: { type: String, default: 'AI-POWERED RECRUITMENT' },
+    titlePrefix: { type: String, default: 'Hire ' },
+    titleHighlight: { type: String, default: 'extraordinary' },
+    titleSuffix: { type: String, default: 'talent, faster.' },
+    subtitle: { type: String, default: '' },
+    ctaPrimary: { type: String, default: 'Get Started' },
+    ctaSecondary: { type: String, default: 'See How It Works' },
+    image: { type: String, default: '' },
+  },
+  // Hero stats
+  heroStats: [{
+    value: { type: String, default: '' },
+    label: { type: String, default: '' },
+  }],
+  // Navigation links
+  navLinks: [{
+    label: { type: String, default: '' },
+    href: { type: String, default: '#' },
+  }],
+  // About
+  about: {
+    eyebrow: { type: String, default: '' },
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+    body: { type: String, default: '' },
+    image: { type: String, default: '' },
+  },
+  // Feature blocks (About grid)
+  features: [{
+    title: { type: String, default: '' },
+    desc: { type: String, default: '' },
+  }],
+  // CTA banner
+  cta: {
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+    body: { type: String, default: '' },
+    buttonText: { type: String, default: 'Book a Demo' },
+  },
+  // Testimonials
+  testimonialsHeading: {
+    eyebrow: { type: String, default: '' },
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+    body: { type: String, default: '' },
+  },
+  testimonials: [{
+    quote: { type: String, default: '' },
+    name: { type: String, default: '' },
+    role: { type: String, default: '' },
+    avatar: { type: String, default: '' },
+  }],
+  // Collaborators / partners
+  partnersHeading: {
+    eyebrow: { type: String, default: '' },
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+  },
+  collaborators: [{
+    name: { type: String, default: '' },
+    logo: { type: String, default: '' },
+  }],
+  // Footer
+  footer: {
+    brandTagline: { type: String, default: '' },
+    newsletterBlurb: { type: String, default: '' },
+    quickLinksTitle: { type: String, default: 'Quick Links' },
+    quickLinks: [{
+      label: { type: String, default: '' },
+      href: { type: String, default: '#' },
+    }],
+    resourcesTitle: { type: String, default: 'Resources' },
+    resources: [{
+      label: { type: String, default: '' },
+      href: { type: String, default: '#' },
+    }],
+  },
+  // Contact
+  contactInfo: {
+    email: { type: String, default: '' },
+    phone: { type: String, default: '' },
+    address: { type: String, default: '' },
+  },
+  contactHeading: {
+    eyebrow: { type: String, default: '' },
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+    body: { type: String, default: '' },
+    officeHours: { type: String, default: '' },
+  },
+  reviewsHeading: {
+    eyebrow: { type: String, default: '' },
+    title: { type: String, default: '' },
+    titleHighlight: { type: String, default: '' },
+    titleSuffix: { type: String, default: '' },
+    body: { type: String, default: '' },
+  },
+}));
+
+// Visitor reviews — submitted on the landing page, approved by an admin
+// before they are shown publicly.
+const Review = mongoose.model('Review', new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  rating: { type: Number, default: 5, min: 1, max: 5 },
+  role: { type: String, default: '' },
+  message: { type: String, required: true, trim: true },
+  approved: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// Seed the default admin account + initial landing content (idempotent)
+async function seedSite() {
+  const DEFAULT_ADMIN = {
+    email: 'admin@talentbridge.ai',
+    password: 'admin123',
+    name: 'Site Admin',
+  };
+
+  let admin = await User.findOne({ email: DEFAULT_ADMIN.email });
+  if (!admin) {
+    admin = new User({ ...DEFAULT_ADMIN, role: 'admin' });
+    await admin.save();
+    console.log('Seeded default admin account');
+  }
+
+  const existing = await SiteContent.findOne({ key: 'landing' });
+  if (!existing) {
+    await new SiteContent({ key: 'landing' }).save();
+    console.log('Seeded default site content');
+  }
+}
+
+const DEFAULT_NAV = [
+  { label: 'Home', href: '#home' },
+  { label: 'About', href: '#about' },
+  { label: 'Testimonials', href: '#testimonials' },
+  { label: 'Partners', href: '#partners' },
+  { label: 'Contact', href: '#contact' },
+];
+
+const DEFAULT_HERO_TITLES = { prefix: 'Hire ', highlight: 'extraordinary', suffix: 'talent, faster.' };
 
 // Register endpoint
 app.post('/api/register', async (req, res) => {
@@ -153,8 +306,8 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ message: 'Email, password, and role are required' });
     }
 
-    if (!['hub', 'seeker', 'employer'].includes(role)) {
-      return res.status(400).json({ message: 'Role must be hub, seeker, or employer' });
+    if (!['hub', 'seeker', 'employer', 'admin'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role' });
     }
 
     // Find user matching BOTH email and role — an account only works in its own role space
@@ -328,6 +481,144 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     res.json({ seekers: seekers.map(publicUser) });
   } catch (error) {
     console.error('Seekers error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Public: get landing page content (used by the landing page)
+app.get('/api/content', async (req, res) => {
+  try {
+    let doc = await SiteContent.findOne({ key: 'landing' });
+    if (!doc) {
+      doc = await new SiteContent({ key: 'landing' }).save();
+    }
+    res.json({ content: doc });
+  } catch (error) {
+    console.error('Content get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: update landing page content (any fields present are merged)
+app.put('/api/content', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    let doc = await SiteContent.findOne({ key: 'landing' });
+    if (!doc) {
+      doc = new SiteContent({ key: 'landing' });
+    }
+    const patch = req.body || {};
+    ['hero', 'about', 'cta', 'testimonialsHeading', 'reviewsHeading', 'partnersHeading', 'footer', 'contactInfo', 'contactHeading']
+      .forEach((k) => {
+        if (patch[k] && typeof patch[k] === 'object') doc[k] = { ...doc[k].toObject?.() , ...patch[k] };
+      });
+    ['heroStats', 'navLinks', 'features', 'testimonials', 'collaborators']
+      .forEach((k) => {
+        if (Array.isArray(patch[k])) doc[k] = patch[k];
+      });
+    await doc.save();
+    res.json({ message: 'Content updated', content: doc });
+  } catch (error) {
+    console.error('Content update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: reset landing content to defaults
+app.post('/api/content/reset', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    await SiteContent.deleteOne({ key: 'landing' });
+    await new SiteContent({ key: 'landing' }).save();
+    const doc = await SiteContent.findOne({ key: 'landing' });
+    res.json({ message: 'Content reset to defaults', content: doc });
+  } catch (error) {
+    console.error('Content reset error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Public: get approved reviews (shown on the landing page)
+app.get('/api/reviews', async (req, res) => {
+  try {
+    const reviews = await Review.find({ approved: true }).sort({ createdAt: -1 });
+    res.json({ reviews });
+  } catch (error) {
+    console.error('Reviews get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Public: submit a review (pending admin approval)
+app.post('/api/reviews', async (req, res) => {
+  try {
+    const { name, rating, role, message } = req.body || {};
+    if (!name || !message) {
+      return res.status(400).json({ message: 'Name and message are required' });
+    }
+    const review = new Review({
+      name: String(name).slice(0, 100),
+      rating: Math.min(5, Math.max(1, Number(rating) || 5)),
+      role: String(role || '').slice(0, 100),
+      message: String(message).slice(0, 1000),
+    });
+    await review.save();
+    res.status(201).json({ message: 'Review submitted for approval', review });
+  } catch (error) {
+    console.error('Review submit error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: list all reviews (approved + pending), newest first
+app.get('/api/admin/reviews', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const reviews = await Review.find().sort({ createdAt: -1 });
+    res.json({ reviews });
+  } catch (error) {
+    console.error('Admin reviews get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: approve or reject a review
+app.patch('/api/admin/reviews/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const { approved } = req.body || {};
+    const review = await Review.findByIdAndUpdate(
+      req.params.id,
+      { approved: approved === true },
+      { new: true }
+    );
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+    res.json({ review });
+  } catch (error) {
+    console.error('Review update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: delete a review
+app.delete('/api/admin/reviews/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const review = await Review.findByIdAndDelete(req.params.id);
+    if (!review) return res.status(404).json({ message: 'Review not found' });
+    res.json({ message: 'Review deleted' });
+  } catch (error) {
+    console.error('Review delete error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

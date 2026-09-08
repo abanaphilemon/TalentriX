@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useInView } from 'react-intersection-observer';
 import { Star, Quote } from 'lucide-react';
-import { testimonials } from '../data/content.js';
+import { useContent } from '../context/ContentContext.jsx';
 
 // Single testimonial glass card
 const TestimonialCard = ({ t, index, inView }) => (
@@ -45,6 +45,9 @@ const TestimonialCard = ({ t, index, inView }) => (
 
 export default function Testimonials() {
   const { ref, inView } = useInView({ triggerOnce: true, threshold: 0.15 });
+  const { content } = useContent();
+  const heading = content.testimonialsHeading || {};
+  const testimonials = content.testimonials || [];
 
   return (
     <section id="testimonials" className="section-padding">
@@ -57,7 +60,7 @@ export default function Testimonials() {
             transition={{ duration: 0.5 }}
             className="inline-block text-xs font-bold tracking-widest text-secondary/60 uppercase mb-3"
           >
-            What Our Customers Say
+            {heading.eyebrow || 'What Our Customers Say'}
           </motion.span>
 
           <motion.h2
@@ -66,9 +69,9 @@ export default function Testimonials() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="font-display text-4xl md:text-5xl lg:text-6xl font-bold leading-tight text-secondary"
           >
-            Loved by{' '}
-            <span className="text-gradient-gold">hiring teams</span>{' '}
-            worldwide.
+            {heading.title || 'Loved by '}
+            <span className="text-gradient-gold">{heading.titleHighlight || 'hiring teams'}</span>{' '}
+            {heading.titleSuffix || 'worldwide.'}
           </motion.h2>
 
           <motion.p
@@ -77,8 +80,7 @@ export default function Testimonials() {
             transition={{ duration: 0.6, delay: 0.2 }}
             className="mt-4 text-lg text-secondary/70"
           >
-            From scrappy startups to Fortune 500s — see why teams choose
-            Talent Bridge AI.
+            {heading.body || ''}
           </motion.p>
         </div>
 

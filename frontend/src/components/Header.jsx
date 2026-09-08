@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, Sparkles, LogOut, ChevronDown } from 'lucide-react';
-import { navLinks } from '../data/content.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useContent } from '../context/ContentContext.jsx';
 
 // Logo mark — small "TB" with a gold accent
 const LogoMark = () => (
@@ -100,6 +100,8 @@ export default function Header() {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const { user, role, openAuth, signOut } = useAuth();
+  const { content } = useContent();
+  const navLinks = content.navLinks || [];
 
   // Add a shadow once the user scrolls away from the top
   useEffect(() => {

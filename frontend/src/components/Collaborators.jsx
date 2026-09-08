@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { useInView } from 'react-intersection-observer';
-import { collaborators } from '../data/content.js';
+import { useContent } from '../context/ContentContext.jsx';
 
 // One partner card — brand logo + name in a glass tile
 const PartnerTile = ({ partner, index, inView }) => (
@@ -35,6 +35,9 @@ const PartnerTile = ({ partner, index, inView }) => (
 
 export default function Collaborators() {
   const { ref, inView } = useInView({ triggerOnce: true, threshold: 0.15 });
+  const { content } = useContent();
+  const heading = content.partnersHeading || {};
+  const collaborators = content.collaborators || [];
 
   return (
     <section id="partners" className="section-padding">
@@ -47,7 +50,7 @@ export default function Collaborators() {
             transition={{ duration: 0.5 }}
             className="inline-block text-xs font-bold tracking-widest text-secondary/60 uppercase mb-3"
           >
-            Trusted By Industry Leaders
+            {heading.eyebrow || 'Trusted By Industry Leaders'}
           </motion.span>
 
           <motion.h2
@@ -56,8 +59,8 @@ export default function Collaborators() {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="font-display text-4xl md:text-5xl lg:text-6xl font-bold leading-tight text-secondary"
           >
-            Powering hiring at{' '}
-            <span className="text-gradient-gold">amazing companies.</span>
+            {heading.title || 'Powering hiring at '}
+            <span className="text-gradient-gold">{heading.titleHighlight || 'amazing companies.'}</span>
           </motion.h2>
         </div>
 
