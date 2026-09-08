@@ -1,128 +1,127 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 
-// localStorage keys — kept in one place so we can rename them safely
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 const STORAGE = {
-  profile: 'tbai.user',        // Google profile (sub, email, name, picture)
-  accounts: 'tbai.accounts',   // mock email/password accounts (local-only demo)
-  session:  'tbai.session',    // active email/password session token
-  role:     'tbai.role',       // chosen role for current session
+  token: 'tbai.token',
+  role: 'tbai.role',
 };
 
-// AuthContext shape:
-//   user           — Google profile (or null)
-//   role           — 'hub' | 'seeker' | 'employer' | null
-//   mode           — 'closed' | 'role' | 'auth'   (what the modal currently shows)
-//   openAuth()     — open the modal at 'role' step
-//   closeAuth()    — close the modal
-//   selectRole(r)  — advance from role selection to login/register
-//   backToRoles()  — go back from login/register to role selection
-//   signIn()       — success callback (Google or email/password)
-//   signOut()      — clear user + session
 const AuthContext = createContext(null);
-
-// Read an account list (or empty array) from localStorage
-function readAccounts() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE.accounts) || '[]');
-  } catch {
-    return [];
-  }
-}
-
-// Tiny non-cryptographic hash so we don't store plain passwords in localStorage.
-// NOT real security — replace with a backend in production.
-function hashPassword(pw) {
-  let h = 0;
-  for (let i = 0; i < pw.length; i += 1) {
-    h = (h << 5) - h + pw.charCodeAt(i);
-    h |= 0;
-  }
-  return String(h);
-}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
-  const [mode, setMode] = useState('closed'); // 'closed' | 'role' | 'auth'
+  const [mode, setMode] = useState('closed');
+  const [loading, setLoading] = useState(true);
 
-  // Rehydrate from localStorage so refreshes keep the user signed in
+  // Rehydrate from localStorage on mount
   useEffect(() => {
-    try {
-      const profile = localStorage.getItem(STORAGE.profile);
-      if (profile) setUser(JSON.parse(profile));
-      const r = localStorage.getItem(STORAGE.role);
-      if (r) setRole(r);
-    } catch {
-      // ignore corrupted entries
-    }
+    const rehydrate = async () => {
+      try {
+        const token = localStorage.getItem(STORAGE.token);
+        const savedRole = localStorage.getItem(STORAGE.role);
+
+        if (token && savedRole) {
+          setRole(savedRole);
+          // Fetch the full user profile from the backend
+          const res = await fetch(`${API_URL}/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setUser(data.user);
+          } else {
+            // Token invalid/expired → clear stored state
+            localStorage.removeItem(STORAGE.token);
+            localStorage.removeItem(STORAGE.role);
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    rehydrate();
   }, []);
 
-  // Open the modal — always starts at role selection
   const openAuth = useCallback(() => {
     setMode('role');
   }, []);
 
   const closeAuth = useCallback(() => setMode('closed'), []);
 
-  // User picked a role → advance to login/register
   const selectRole = useCallback((r) => {
     setRole(r);
     localStorage.setItem(STORAGE.role, r);
     setMode('auth');
   }, []);
 
-  // Back button from login/register → return to role selection
   const backToRoles = useCallback(() => setMode('role'), []);
 
-  // ───── Auth actions ─────
+  // Register with backend API
+  const registerWithEmail = useCallback(async ({ name, email, password }) => {
+    try {
+      const res = await fetch(`${API_URL}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, role }),
+      });
 
-  // Google OAuth success: persist profile, close modal
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Registration failed' };
+      }
+
+      localStorage.setItem(STORAGE.token, data.token);
+      setUser(data.user);
+      setRole(data.user.role);
+      localStorage.setItem(STORAGE.role, data.user.role);
+      setMode('closed');
+      return { ok: true, user: data.user };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [role]);
+
+  // Login with backend API
+  const loginWithEmail = useCallback(async ({ email, password }) => {
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Login failed' };
+      }
+
+      localStorage.setItem(STORAGE.token, data.token);
+      setUser(data.user);
+      setRole(data.user.role);
+      localStorage.setItem(STORAGE.role, data.user.role);
+      setMode('closed');
+      return { ok: true, user: data.user };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [role]);
+
+  // Google sign-in — stores profile locally (can be extended to call backend)
   const signInWithGoogle = useCallback((googleProfile) => {
-    localStorage.setItem(STORAGE.profile, JSON.stringify(googleProfile));
     setUser(googleProfile);
     setMode('closed');
   }, []);
 
-  // Email/password register — creates a new account if email is unused
-  const registerWithEmail = useCallback(
-    ({ name, email, password }) => {
-      const accounts = readAccounts();
-      const exists = accounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
-      if (exists) {
-        return { ok: false, error: 'An account with that email already exists. Try signing in.' };
-      }
-      const newAccount = { name, email, passwordHash: hashPassword(password) };
-      localStorage.setItem(
-        STORAGE.accounts,
-        JSON.stringify([...accounts, newAccount])
-      );
-      localStorage.setItem(STORAGE.session, email);
-      setUser({ sub: email, email, name, picture: null });
-      setMode('closed');
-      return { ok: true };
-    },
-    []
-  );
-
-  // Email/password login — checks against stored accounts
-  const loginWithEmail = useCallback(({ email, password }) => {
-    const accounts = readAccounts();
-    const account = accounts.find(
-      (a) => a.email.toLowerCase() === email.toLowerCase()
-    );
-    if (!account || account.passwordHash !== hashPassword(password)) {
-      return { ok: false, error: 'Invalid email or password.' };
-    }
-    localStorage.setItem(STORAGE.session, email);
-    setUser({ sub: email, email, name: account.name, picture: null });
-    setMode('closed');
-    return { ok: true };
-  }, []);
-
-  // Sign out — clear session + profile but keep registered accounts so they can log back in
   const signOut = useCallback(() => {
-    localStorage.removeItem(STORAGE.profile);
-    localStorage.removeItem(STORAGE.session);
+    localStorage.removeItem(STORAGE.token);
+    localStorage.removeItem(STORAGE.role);
     setUser(null);
     setRole(null);
   }, []);
@@ -131,13 +130,14 @@ export function AuthProvider({ children }) {
     user,
     role,
     mode,
+    loading,
     openAuth,
     closeAuth,
     selectRole,
     backToRoles,
     signInWithGoogle,
-    registerWithEmail,
     loginWithEmail,
+    registerWithEmail,
     signOut,
   };
 

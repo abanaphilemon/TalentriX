@@ -158,7 +158,7 @@ export default function AuthPage() {
   // ───── Submit handlers ─────
   const onSubmitLogin = async (data) => {
     setSubmitError('');
-    const res = loginWithEmail(data);
+    const res = await loginWithEmail(data);
     if (!res.ok) setSubmitError(res.error);
   };
 
@@ -168,7 +168,7 @@ export default function AuthPage() {
       setSubmitError('Passwords do not match.');
       return;
     }
-    const res = registerWithEmail(data);
+    const res = await registerWithEmail(data);
     if (!res.ok) setSubmitError(res.error);
   };
 
