@@ -26,7 +26,6 @@ mongoose.connect(uri)
   console.log('MongoDB connected');
   try {
     await seedSite();
-    await seedJobs();
   } catch (e) {
     console.error('Seed error:', e.message);
   }
@@ -351,65 +350,6 @@ const Job = mongoose.model('Job', new mongoose.Schema({
   postedAt: { type: Date, default: Date.now },
 }));
 
-// Sample jobs shown until real postings exist. Seeded only when the
-// jobs collection is empty.
-const SAMPLE_JOBS = [
-  {
-    title: 'Senior Frontend Engineer',
-    company: 'Stripe',
-    location: 'Remote (US)',
-    type: 'Full-time',
-    salary: '$140k – $180k',
-    description: 'Build fast, delightful payment experiences for millions of developers. React, TypeScript, and a passion for pixel-perfect UI.',
-    skills: ['React', 'TypeScript', 'JavaScript', 'CSS'],
-  },
-  {
-    title: 'Product Designer',
-    company: 'Figma',
-    location: 'San Francisco, CA',
-    type: 'Full-time',
-    salary: '$130k – $170k',
-    description: 'Design collaborative tools that help teams think, plan, and build better together. Portfolio required.',
-    skills: ['Figma', 'UI Design', 'Prototyping', 'Design Systems'],
-  },
-  {
-    title: 'Data Scientist — ML',
-    company: 'Google',
-    location: 'Mountain View, CA',
-    type: 'Full-time',
-    salary: '$150k – $220k',
-    description: 'Turn terabytes of signal into products people love. Python, ML frameworks, and strong statistical foundations.',
-    skills: ['Python', 'Machine Learning', 'Statistics', 'SQL'],
-  },
-  {
-    title: 'Backend Engineer (Node.js)',
-    company: 'Notion',
-    location: 'Remote (EU + US)',
-    type: 'Full-time',
-    salary: '$130k – $165k',
-    description: 'Ship the APIs that power the connected workspace. Node.js, PostgreSQL, and a bias for clean, testable code.',
-    skills: ['Node.js', 'PostgreSQL', 'REST APIs', 'JavaScript'],
-  },
-  {
-    title: 'Growth Marketing Manager',
-    company: 'Shopify',
-    location: 'Ottawa / Remote',
-    type: 'Contract',
-    salary: '$90k – $120k',
-    description: 'Own acquisition funnels, lifecycle email, and experiments that compound. Data-driven with a creative edge.',
-    skills: ['Marketing', 'SEO', 'Analytics', 'Content Strategy'],
-  },
-  {
-    title: 'Product Manager, AI',
-    company: 'Microsoft',
-    location: 'Seattle, WA / Hybrid',
-    type: 'Full-time',
-    salary: '$160k – $210k',
-    description: 'Define and ship AI-powered experiences for millions. Customer-obsessed, technical, and comfortable with ambiguity.',
-    skills: ['Product Strategy', 'AI/ML', 'Roadmapping', 'User Research'],
-  },
-];
-
 // Full default landing-page content. This is the source of truth for initial
 // seeding, per-section resets, and backfilling older/empty docs.
 const DEFAULT_SITE = {
@@ -595,13 +535,6 @@ async function seedSite() {
 }
 
 // Seed sample job listings only when the jobs collection is empty.
-async function seedJobs() {
-  const count = await Job.countDocuments();
-  if (count > 0) return;
-  await Job.insertMany(SAMPLE_JOBS.map((j) => ({ ...j, postedAt: new Date() })));
-  console.log(`Seeded ${SAMPLE_JOBS.length} sample jobs`);
-}
-
 const DEFAULT_NAV = [
   { label: 'Home', href: '#home' },
   { label: 'About', href: '#about' },
@@ -1135,6 +1068,89 @@ app.get('/api/jobs', async (req, res) => {
     console.error('Jobs error:', error);
     res.status(500).json({ message: 'Server error' });
   }
+});
+
+// Public: aggregated external jobs from Remotive, Arbeitnow, RemoteOK
+app.get('/api/jobs/external', async (req, res) => {
+  const fetchWithTimeout = async (url, timeout = 8000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const r = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'TalentBridgeAI-JobBoard/1.0' },
+      });
+      clearTimeout(timer);
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      clearTimeout(timer);
+      return null;
+    }
+  };
+
+  const normalizeRemotive = (data) =>
+    (data.jobs || []).map((j) => ({
+      id: `remotive-${j.id}`,
+      title: j.title || '',
+      company: j.company_name || '',
+      location: j.candidate_required_location || 'Remote',
+      type: j.job_type
+        ? j.job_type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+        : 'Remote',
+      salary: j.salary || '',
+      description: (j.description || '').replace(/<[^>]*>/g, '').slice(0, 500),
+      skills: j.tags || [],
+      source: 'Remotive',
+      url: j.url || '',
+      postedAt: j.publication_date || null,
+    }));
+
+  const normalizeArbeitnow = (data) =>
+    (data.data || []).map((j) => ({
+      id: `arbeitnow-${j.id}`,
+      title: j.title || '',
+      company: j.company_name || '',
+      location: j.location || '',
+      type: j.remote ? 'Remote' : 'On-site',
+      salary: '',
+      description: (j.description || '').replace(/<[^>]*>/g, '').slice(0, 500),
+      skills: j.tags || [],
+      source: 'Arbeitnow',
+      url: j.url || '',
+      postedAt: j.created_at || null,
+    }));
+
+  const normalizeRemoteok = (data) =>
+    (Array.isArray(data) ? data : [])
+      .filter((j) => j.id && j.position)
+      .map((j) => ({
+        id: `remoteok-${j.id}`,
+        title: j.position || '',
+        company: j.company || '',
+        location: j.location || 'Remote',
+        type: j.remote
+          ? 'Remote'
+          : (j.type || 'Full-time').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+        salary: j.salary || '',
+        description: (j.description || '').replace(/<[^>]*>/g, '').slice(0, 500),
+        skills: j.tags || [],
+        source: 'RemoteOK',
+        url: j.url || '',
+        postedAt: j.date || null,
+      }));
+
+  const results = await Promise.allSettled([
+    fetchWithTimeout('https://remotive.com/api/remote-jobs?limit=100').then(normalizeRemotive),
+    fetchWithTimeout('https://www.arbeitnow.com/api/job-board-api').then(normalizeArbeitnow),
+    fetchWithTimeout('https://remoteok.com/api').then(normalizeRemoteok),
+  ]);
+
+  const jobs = results
+    .filter((r) => r.status === 'fulfilled' && Array.isArray(r.value))
+    .flatMap((r) => r.value);
+
+  res.json({ jobs, count: jobs.length });
 });
 
 // Public: a seeker's portfolio profile (built from the seeker's dashboard settings)

@@ -317,7 +317,9 @@ export default function SeekerDashboard() {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [q, setQ] = useState('');
   const [typeFilter, setTypeFilter] = useState('All');
+  const [sourceFilter, setSourceFilter] = useState('All');
   const [applied, setApplied] = useState(() => new Set());
+  const [selectedJob, setSelectedJob] = useState(null);
 
   // Settings form
   const [form, setForm] = useState({});
@@ -395,11 +397,19 @@ export default function SeekerDashboard() {
   const loadJobs = async () => {
     setJobsLoading(true);
     try {
-      const res = await fetch(`${API_URL}/jobs`);
-      if (res.ok) {
-        const d = await res.json();
-        setJobs(d.jobs || []);
-      }
+      const [localRes, externalRes] = await Promise.allSettled([
+        fetch(`${API_URL}/jobs`),
+        fetch(`${API_URL}/jobs/external`),
+      ]);
+      const localJobs =
+        localRes.status === 'fulfilled' && localRes.value.ok
+          ? (await localRes.value.json()).jobs || []
+          : [];
+      const externalJobs =
+        externalRes.status === 'fulfilled' && externalRes.value.ok
+          ? (await externalRes.value.json()).jobs || []
+          : [];
+      setJobs([...localJobs, ...externalJobs]);
     } catch {
       // ignore
     } finally {
@@ -421,16 +431,39 @@ export default function SeekerDashboard() {
   const setList = (k) => (v) => set(k, v);
 
   const mySkills = (profile?.skills || []).map((s) => s.toLowerCase());
+  const myTitle = (form.title || '').toLowerCase();
 
   const matchFor = (job) => {
     const jobSkills = (job.skills || []).map((s) => s.toLowerCase());
-    if (jobSkills.length === 0) return null;
-    const overlap = jobSkills.filter((s) => mySkills.includes(s)).length;
-    return Math.round((overlap / jobSkills.length) * 100);
+    const jobTitle = (job.title || '').toLowerCase();
+
+    // Role match: compare seeker's desired role against job title
+    let roleScore = 0;
+    if (myTitle && jobTitle) {
+      const roleWords = myTitle.split(/\s+/).filter((w) => w.length > 2);
+      const jobWords = jobTitle.split(/\s+/).filter((w) => w.length > 2);
+      const roleHits = roleWords.filter((w) => jobWords.some((jw) => jw.includes(w) || w.includes(jw))).length;
+      roleScore = roleWords.length > 0 ? roleHits / roleWords.length : 0;
+    }
+
+    // Skill match: overlap between seeker skills and job skills
+    let skillScore = 0;
+    if (jobSkills.length > 0) {
+      const overlap = jobSkills.filter((s) => mySkills.includes(s)).length;
+      skillScore = overlap / jobSkills.length;
+    }
+
+    // Weighted: 60% role, 40% skills (or all role if no skills listed)
+    const score = jobSkills.length > 0
+      ? roleScore * 0.6 + skillScore * 0.4
+      : roleScore;
+
+    return Math.round(score * 100);
   };
 
   const filteredJobs = jobs
     .filter((j) => (typeFilter === 'All' ? true : j.type === typeFilter))
+    .filter((j) => (sourceFilter === 'All' ? true : j.source === sourceFilter))
     .filter((j) => {
       const query = q.trim().toLowerCase();
       if (!query) return true;
@@ -438,7 +471,8 @@ export default function SeekerDashboard() {
         .join(' ')
         .toLowerCase()
         .includes(query);
-    });
+    })
+    .sort((a, b) => matchFor(b) - matchFor(a));
 
   const cleanEntries = (arr) => (arr || []).map(({ _key, ...rest }) => rest);
 
@@ -553,6 +587,7 @@ export default function SeekerDashboard() {
   };
 
   const jobTypes = ['All', ...new Set(jobs.map((j) => j.type).filter(Boolean))];
+  const jobSources = ['All', ...new Set(jobs.map((j) => j.source).filter(Boolean))];
   const hasCV = !!(form.cv || profile?.cv);
   const cvFileName = (dataUrl) => {
     if (!dataUrl) return '';
@@ -673,10 +708,19 @@ export default function SeekerDashboard() {
                   <select
                     value={typeFilter}
                     onChange={(e) => setTypeFilter(e.target.value)}
-                    className="sm:w-48 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 text-sm outline-none"
+                    className="sm:w-44 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 text-sm outline-none"
                   >
                     {jobTypes.map((t) => (
                       <option key={t}>{t}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={sourceFilter}
+                    onChange={(e) => setSourceFilter(e.target.value)}
+                    className="sm:w-40 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 text-sm outline-none"
+                  >
+                    {jobSources.map((s) => (
+                      <option key={s}>{s}</option>
                     ))}
                   </select>
                 </div>
@@ -695,9 +739,8 @@ export default function SeekerDashboard() {
                   <div className="grid md:grid-cols-2 gap-4">
                     {filteredJobs.map((j) => {
                       const match = matchFor(j);
-                      const isApplied = applied.has(j._id);
                       return (
-                        <div key={j._id} className="bg-white rounded-2xl border border-secondary/10 p-6 flex flex-col">
+                        <div key={j._id || j.id} className="bg-white rounded-2xl border border-secondary/10 p-6 flex flex-col cursor-pointer hover:border-primary/40 hover:shadow-md transition-all" onClick={() => setSelectedJob(j)}>
                           <div className="flex items-start justify-between gap-3 mb-3">
                             <div className="flex items-center gap-3 min-w-0">
                               <div className="w-11 h-11 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
@@ -713,7 +756,18 @@ export default function SeekerDashboard() {
                                 </div>
                               </div>
                             </div>
-                            {match !== null && (
+                            <div className="flex items-center gap-2 shrink-0">
+                              {j.source && (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wide ${
+                                  j.source === 'Remotive' ? 'bg-blue-100 text-blue-700'
+                                  : j.source === 'Arbeitnow' ? 'bg-purple-100 text-purple-700'
+                                  : j.source === 'RemoteOK' ? 'bg-emerald-100 text-emerald-700'
+                                  : 'bg-secondary/10 text-secondary/60'
+                                }`}>
+                                  {j.source}
+                                </span>
+                              )}
+                              {match > 0 && (
                               <span
                                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-bold shrink-0 ${
                                   match >= 60
@@ -727,6 +781,7 @@ export default function SeekerDashboard() {
                                 {match}% match
                               </span>
                             )}
+                            </div>
                           </div>
 
                           {j.salary && (
@@ -757,33 +812,11 @@ export default function SeekerDashboard() {
                             </div>
                           )}
 
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setApplied((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(j._id)) next.delete(j._id);
-                                else next.add(j._id);
-                                return next;
-                              })
-                            }
-                            disabled={match !== null && match < 35 && !isApplied}
-                            className={`mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-40 ${
-                              isApplied
-                                ? 'bg-green-100 text-green-700'
-                                : 'bg-secondary text-white hover:bg-accent'
-                            }`}
-                          >
-                            {isApplied ? (
-                              <>
-                                <CheckCircle2 className="w-4 h-4" /> Applied
-                              </>
-                            ) : (
-                              <>
-                                <Eye className="w-4 h-4" /> Apply
-                              </>
-                            )}
-                          </button>
+                          <div className="mt-auto flex items-center justify-end pt-2">
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent transition-colors">
+                              View Details <ExternalLink className="w-3 h-3" />
+                            </span>
+                          </div>
                         </div>
                       );
                     })}
@@ -1408,6 +1441,137 @@ export default function SeekerDashboard() {
           setUnread(0);
         }}
       />
+
+      {/* Job detail modal */}
+      {selectedJob && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedJob(null)}>
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-secondary/10 px-6 py-4 flex items-start justify-between gap-4 rounded-t-3xl">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className="w-12 h-12 rounded-2xl bg-primary/15 flex items-center justify-center shrink-0">
+                  <Building2 className="w-6 h-6 text-secondary" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-display text-xl font-bold text-secondary leading-tight">{selectedJob.title}</h2>
+                  <p className="text-sm text-secondary/60">{selectedJob.company}{selectedJob.location ? ` · ${selectedJob.location}` : ''}</p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedJob(null)} className="p-2 rounded-lg hover:bg-secondary/5 transition-colors shrink-0">
+                <X className="w-5 h-5 text-secondary/60" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Meta row */}
+              <div className="flex flex-wrap gap-2">
+                {selectedJob.source && (
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
+                    selectedJob.source === 'Remotive' ? 'bg-blue-100 text-blue-700'
+                    : selectedJob.source === 'Arbeitnow' ? 'bg-purple-100 text-purple-700'
+                    : selectedJob.source === 'RemoteOK' ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-secondary/10 text-secondary/60'
+                  }`}>
+                    {selectedJob.source}
+                  </span>
+                )}
+                {selectedJob.type && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-secondary/5 text-secondary/70">
+                    {selectedJob.type}
+                  </span>
+                )}
+                {selectedJob.salary && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-50 text-green-700">
+                    <Clock className="w-3 h-3" /> {selectedJob.salary}
+                  </span>
+                )}
+                {(() => {
+                  const m = matchFor(selectedJob);
+                  return m > 0 ? (
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold ${
+                      m >= 60 ? 'bg-green-100 text-green-700'
+                      : m >= 35 ? 'bg-amber-100 text-amber-700'
+                      : 'bg-secondary/10 text-secondary/60'
+                    }`}>
+                      {m}% match
+                    </span>
+                  ) : null;
+                })()}
+              </div>
+
+              {/* Skills */}
+              {(selectedJob.skills || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/40 mb-2">Skills</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedJob.skills.map((s) => (
+                      <span
+                        key={s}
+                        className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                          mySkills.includes(s.toLowerCase())
+                            ? 'bg-primary/20 text-secondary'
+                            : 'bg-secondary/5 text-secondary/60'
+                        }`}
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Description */}
+              {selectedJob.description && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/40 mb-2">Description</h4>
+                  <div className="text-sm text-secondary/70 leading-relaxed whitespace-pre-line">
+                    {selectedJob.description}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-secondary/10 px-6 py-4 flex items-center justify-between gap-3 rounded-b-3xl">
+              <p className="text-xs text-secondary/40">
+                via {selectedJob.source || 'Platform'}
+              </p>
+              <div className="flex items-center gap-3">
+                {selectedJob.url && (
+                  <a
+                    href={selectedJob.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 transition-colors"
+                  >
+                    Open Original <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                <button
+                  onClick={() => {
+                    if (selectedJob.url) {
+                      window.open(selectedJob.url, '_blank', 'noopener');
+                    }
+                    setApplied((prev) => new Set(prev).add(selectedJob._id || selectedJob.id));
+                    setSelectedJob(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-secondary hover:bg-accent transition-colors"
+                >
+                  {applied.has(selectedJob._id || selectedJob.id) ? (
+                    <><CheckCircle2 className="w-4 h-4" /> Applied</>
+                  ) : (
+                    <><ExternalLink className="w-4 h-4" /> Apply Now</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
