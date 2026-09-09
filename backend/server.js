@@ -1153,6 +1153,97 @@ app.get('/api/jobs/external', async (req, res) => {
   res.json({ jobs, count: jobs.length });
 });
 
+// Public: aggregated external grants from Grants.gov + EU Funding & Tenders
+app.get('/api/grants/external', async (req, res) => {
+  try {
+    // Grants.gov — open + forecasted (POST search2 — no auth required)
+    const govRes = await fetch('https://api.grants.gov/v1/api/search2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oppStatuses: 'posted', rows: 50 }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const govData = govRes.ok ? await govRes.json() : {};
+    const opps = govData?.data?.oppHits || [];
+    const grants = opps.map((g) => ({
+      id: `grantsgov-${g.id || g.oppId}`,
+      title: g.title || g.oppTitle || '',
+      agency: g.agencyName || g.agency || '',
+      amount: g.awardFloor && g.awardCeil
+        ? `$${Number(g.awardFloor).toLocaleString()} – $${Number(g.awardCeil).toLocaleString()}`
+        : g.awardCeil
+        ? `Up to $${Number(g.awardCeil).toLocaleString()}`
+        : '',
+      deadline: g.closeDate || g.announcementCloseDate || '',
+      description: (g.synopsis || g.description || '').replace(/<[^>]*>/g, '').slice(0, 500),
+      eligibility: g.applicantTypes ? g.applicantTypes.join(', ') : '',
+      tags: g.categories || g.fundingCategories || [],
+      source: 'Grants.gov',
+      url: g.oppUrl || (g.id ? `https://www.grants.gov/search-results-detail/${g.id}` : ''),
+      status: g.oppStatus || 'posted',
+    }));
+
+    // EU Funding & Tenders — best-effort (POST multipart)
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const euRes = await fetch('https://api.tech.ec.europa.eu/search-api/prod/rest/search?apiKey=SEDIA', {
+        method: 'POST',
+        signal: controller.signal,
+        body: (() => {
+          const fd = new FormData();
+          fd.set('text', '***');
+          fd.set('status', 'open');
+          fd.set('pageSize', '50');
+          fd.set('pageNum', '0');
+          return fd;
+        })(),
+      });
+      clearTimeout(timer);
+      if (euRes.ok) {
+        const euData = await euRes.json();
+        const euResults = (euData?.results || [])
+          .filter((r) => {
+            const m = r.metadata || {};
+            const lang = Array.isArray(m.language) ? m.language[0] : m.language;
+            return lang === 'en';
+          })
+          .slice(0, 30)
+          .map((r) => {
+            const m = r.metadata || {};
+            const rawTitle = Array.isArray(m.title) ? m.title[0] : (r.content || '');
+            const title = (rawTitle || '').replace(/<[^>]*>/g, '').trim();
+            const desc = Array.isArray(m.description) ? m.description[0] : (r.summary || '');
+            const programmes = Array.isArray(m.esST_programmes) ? m.esST_programmes : [];
+            const endDate = Array.isArray(m.esDA_endDate) ? m.esDA_endDate[0] : '';
+            const audiences = Array.isArray(m.esST_audiences) ? m.esST_audiences : [];
+            return {
+              id: `eu-${r.reference || Math.random().toString(36).slice(2, 8)}`,
+              title: title || r.content || '',
+              agency: programmes[0] || 'European Commission',
+              amount: '',
+              deadline: endDate ? endDate.split('T')[0] : '',
+              description: (desc || '').replace(/<[^>]*>/g, '').slice(0, 500),
+              eligibility: audiences.join(', '),
+              tags: programmes.slice(0, 4),
+              source: 'EU Funding',
+              url: r.url || '',
+              status: 'open',
+            };
+          });
+        grants.push(...euResults);
+      }
+    } catch {
+      // EU API best-effort — ignore failures
+    }
+
+    res.json({ grants, count: grants.length });
+  } catch (error) {
+    console.error('Grants external error:', error);
+    res.json({ grants: [], count: 0 });
+  }
+});
+
 // Public: a seeker's portfolio profile (built from the seeker's dashboard settings)
 app.get('/api/public/profile/:id', async (req, res) => {
   try {

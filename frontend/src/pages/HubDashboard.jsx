@@ -20,6 +20,7 @@ import {
   Calendar,
   ExternalLink,
   Tag,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -155,11 +156,9 @@ export default function HubDashboard() {
   // Grant catalog state
   const [grants, setGrants] = useState([]);
   const [loadingGrants, setLoadingGrants] = useState(false);
-  const [showGrantForm, setShowGrantForm] = useState(false);
-  const [grantForm, setGrantForm] = useState({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' });
-  const [grantSaving, setGrantSaving] = useState(false);
-  const [grantMsg, setGrantMsg] = useState('');
-  const [editingGrant, setEditingGrant] = useState(null);
+  const [grantQ, setGrantQ] = useState('');
+  const [grantSourceFilter, setGrantSourceFilter] = useState('All');
+  const [selectedGrant, setSelectedGrant] = useState(null);
   // Organization profile state (shown on the landing partners section)
   const [orgName, setOrgName] = useState(user?.company || '');
   const [orgLogo, setOrgLogo] = useState(user?.logo || '');
@@ -214,12 +213,10 @@ export default function HubDashboard() {
   const loadGrants = async () => {
     setLoadingGrants(true);
     try {
-      const res = await fetch(`${API_URL}/hub/grants`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${API_URL}/grants/external`);
       if (res.ok) {
         const d = await res.json();
-        setGrants(d.grants);
+        setGrants(d.grants || []);
       }
     } catch {
       // ignore
@@ -228,66 +225,18 @@ export default function HubDashboard() {
     }
   };
 
-  const saveGrant = async () => {
-    if (!grantForm.title.trim()) return;
-    setGrantSaving(true);
-    setGrantMsg('');
-    try {
-      const body = {
-        ...grantForm,
-        tags: grantForm.tags ? grantForm.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
-      };
-      const url = editingGrant ? `${API_URL}/hub/grants/${editingGrant._id}` : `${API_URL}/hub/grants`;
-      const res = await fetch(url, {
-        method: editingGrant ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        setGrantMsg(editingGrant ? 'Grant updated.' : 'Grant created.');
-        setShowGrantForm(false);
-        setEditingGrant(null);
-        setGrantForm({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' });
-        loadGrants();
-        setTimeout(() => setGrantMsg(''), 3000);
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setGrantMsg(d.message || 'Could not save grant.');
-      }
-    } catch {
-      setGrantMsg('Could not connect to server.');
-    } finally {
-      setGrantSaving(false);
-    }
-  };
+  const grantSources = ['All', ...new Set(grants.map((g) => g.source).filter(Boolean))];
 
-  const deleteGrant = async (id) => {
-    if (!window.confirm('Delete this grant?')) return;
-    try {
-      const res = await fetch(`${API_URL}/hub/grants/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) loadGrants();
-    } catch {
-      // ignore
-    }
-  };
-
-  const startEditGrant = (g) => {
-    setEditingGrant(g);
-    setGrantForm({
-      title: g.title || '',
-      description: g.description || '',
-      amount: g.amount || '',
-      deadline: g.deadline || '',
-      eligibility: g.eligibility || '',
-      link: g.link || '',
-      tags: (g.tags || []).join(', '),
-      status: g.status || 'open',
+  const filteredGrants = grants
+    .filter((g) => (grantSourceFilter === 'All' ? true : g.source === grantSourceFilter))
+    .filter((g) => {
+      const query = grantQ.trim().toLowerCase();
+      if (!query) return true;
+      return [g.title, g.agency, g.description, g.eligibility, ...(g.tags || [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
     });
-    setShowGrantForm(true);
-  };
 
   const copy = async () => {
     try {
@@ -434,151 +383,66 @@ export default function HubDashboard() {
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
                 <h2 className="font-display text-lg font-bold text-secondary">Grant Catalog</h2>
-                <span className="text-sm text-secondary/50">({grants.length})</span>
+                <span className="text-sm text-secondary/50">({filteredGrants.length})</span>
               </div>
-              <button
-                onClick={() => { setEditingGrant(null); setGrantForm({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' }); setShowGrantForm(!showGrantForm); }}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 transition-colors"
-              >
-                {showGrantForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                {showGrantForm ? 'Cancel' : 'New grant'}
-              </button>
             </div>
 
-            {grantMsg && (
-              <div className={`mb-4 text-sm font-semibold ${grantMsg.includes('saved') || grantMsg.includes('created') || grantMsg.includes('updated') ? 'text-emerald-700' : 'text-amber-700'}`}>
-                {grantMsg}
+            {/* Toolbar */}
+            <div className="flex flex-col sm:flex-row gap-3 mb-6">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary/40" />
+                <input
+                  value={grantQ}
+                  onChange={(e) => setGrantQ(e.target.value)}
+                  placeholder="Search grants, agencies, topics…"
+                  className={`${inputCls} pl-10`}
+                />
               </div>
-            )}
-
-            {/* Create / Edit grant form */}
-            {showGrantForm && (
-              <div className="bg-white rounded-2xl border border-secondary/10 p-6 mb-6">
-                <h3 className="font-display font-bold text-secondary mb-4">
-                  {editingGrant ? 'Edit grant' : 'Add a new grant'}
-                </h3>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Title *</label>
-                    <input
-                      value={grantForm.title}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, title: e.target.value }))}
-                      placeholder="e.g. Tech Skills Innovation Fund"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Description</label>
-                    <textarea
-                      rows={3}
-                      value={grantForm.description}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, description: e.target.value }))}
-                      placeholder="Describe what this grant covers, goals, and impact..."
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Amount</label>
-                    <input
-                      value={grantForm.amount}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, amount: e.target.value }))}
-                      placeholder="e.g. $5,000"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Deadline</label>
-                    <input
-                      value={grantForm.deadline}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, deadline: e.target.value }))}
-                      placeholder="e.g. Dec 31, 2026"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Eligibility</label>
-                    <input
-                      value={grantForm.eligibility}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, eligibility: e.target.value }))}
-                      placeholder="e.g. Members with 3+ endorsements"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Application link</label>
-                    <input
-                      value={grantForm.link}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, link: e.target.value }))}
-                      placeholder="https://..."
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Tags (comma-separated)</label>
-                    <input
-                      value={grantForm.tags}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, tags: e.target.value }))}
-                      placeholder="e.g. tech, training, equipment"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Status</label>
-                    <select
-                      value={grantForm.status}
-                      onChange={(e) => setGrantForm((f) => ({ ...f, status: e.target.value }))}
-                      className={inputCls}
-                    >
-                      <option value="open">Open</option>
-                      <option value="upcoming">Upcoming</option>
-                      <option value="closed">Closed</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="mt-4 flex items-center gap-3">
-                  <button
-                    onClick={saveGrant}
-                    disabled={grantSaving || !grantForm.title.trim()}
-                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
-                  >
-                    {grantSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                    {editingGrant ? 'Update grant' : 'Create grant'}
-                  </button>
-                </div>
-              </div>
-            )}
+              <select
+                value={grantSourceFilter}
+                onChange={(e) => setGrantSourceFilter(e.target.value)}
+                className="sm:w-48 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 text-sm outline-none"
+              >
+                {grantSources.map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </div>
 
             {/* Grant cards */}
             {loadingGrants ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
               </div>
-            ) : grants.length === 0 ? (
+            ) : filteredGrants.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
                 <Coins className="w-8 h-8 text-primary mx-auto mb-3" />
-                <p className="font-display font-bold text-secondary">No grants yet</p>
-                <p className="text-sm text-secondary/60 mt-1">
-                  Create your first grant to offer funding opportunities to your talent pool.
-                </p>
+                <p className="font-display font-bold text-secondary">No grants found</p>
+                <p className="text-sm text-secondary/60 mt-1">Try a different search or filter.</p>
               </div>
             ) : (
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {grants.map((g) => (
-                  <div key={g._id} className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col">
+                {filteredGrants.map((g) => (
+                  <div
+                    key={g.id}
+                    className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col cursor-pointer hover:border-primary/40 hover:shadow-md transition-all"
+                    onClick={() => setSelectedGrant(g)}
+                  >
                     <div className="flex items-start justify-between gap-2 mb-2">
-                      <h3 className="font-display font-bold text-secondary leading-snug">{g.title}</h3>
-                      <span
-                        className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
-                          g.status === 'open'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : g.status === 'upcoming'
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-secondary/10 text-secondary/50'
-                        }`}
-                      >
-                        {g.status}
-                      </span>
+                      <h3 className="font-display font-bold text-secondary leading-snug line-clamp-2">{g.title}</h3>
+                      {g.source && (
+                        <span className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                          g.source === 'Grants.gov' ? 'bg-blue-100 text-blue-700'
+                          : g.source === 'EU Funding' ? 'bg-amber-100 text-amber-700'
+                          : 'bg-secondary/10 text-secondary/50'
+                        }`}>
+                          {g.source === 'EU Funding' ? 'EU' : 'US'}
+                        </span>
+                      )}
                     </div>
+                    {g.agency && (
+                      <p className="text-xs text-secondary/50 mb-1">{g.agency}</p>
+                    )}
                     {g.description && (
                       <p className="text-xs text-secondary/60 mb-3 line-clamp-2">{g.description}</p>
                     )}
@@ -593,46 +457,23 @@ export default function HubDashboard() {
                           <Calendar className="w-3.5 h-3.5" /> Deadline: {g.deadline}
                         </div>
                       )}
-                      {g.eligibility && (
-                        <div className="flex items-center gap-1.5 text-xs text-secondary/60">
-                          <BadgeCheck className="w-3.5 h-3.5" /> {g.eligibility}
-                        </div>
-                      )}
                     </div>
                     {(g.tags || []).length > 0 && (
                       <div className="flex flex-wrap gap-1 mb-3">
-                        {g.tags.map((tag) => (
+                        {g.tags.slice(0, 4).map((tag) => (
                           <span key={tag} className="inline-flex items-center gap-1 text-[10px] font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full">
                             <Tag className="w-2.5 h-2.5" /> {tag}
                           </span>
                         ))}
+                        {g.tags.length > 4 && (
+                          <span className="text-[10px] text-secondary/40">+{g.tags.length - 4}</span>
+                        )}
                       </div>
                     )}
-                    <div className="mt-auto flex items-center gap-2 pt-3 border-t border-secondary/5">
-                      {g.link && (
-                        <a
-                          href={g.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
-                        >
-                          <ExternalLink className="w-3 h-3" /> Apply
-                        </a>
-                      )}
-                      <div className="ml-auto flex items-center gap-1">
-                        <button
-                          onClick={() => startEditGrant(g)}
-                          className="text-xs text-secondary/50 hover:text-secondary px-2 py-1 rounded-lg hover:bg-secondary/5 transition-colors"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteGrant(g._id)}
-                          className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
+                    <div className="mt-auto flex items-center justify-end pt-2">
+                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent transition-colors">
+                        View Details <ExternalLink className="w-3 h-3" />
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -916,6 +757,125 @@ export default function HubDashboard() {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Grant detail modal */}
+      {selectedGrant && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedGrant(null)}>
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-secondary/10 px-6 py-4 flex items-start justify-between gap-4 rounded-t-3xl">
+              <div className="flex items-center gap-4 min-w-0">
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                  selectedGrant.source === 'Grants.gov' ? 'bg-blue-100' : 'bg-amber-100'
+                }`}>
+                  <Coins className={`w-6 h-6 ${selectedGrant.source === 'Grants.gov' ? 'text-blue-700' : 'text-amber-700'}`} />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-display text-xl font-bold text-secondary leading-tight">{selectedGrant.title}</h2>
+                  <p className="text-sm text-secondary/60">{selectedGrant.agency}</p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedGrant(null)} className="p-2 rounded-lg hover:bg-secondary/5 transition-colors shrink-0">
+                <X className="w-5 h-5 text-secondary/60" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 space-y-5">
+              {/* Meta row */}
+              <div className="flex flex-wrap gap-2">
+                {selectedGrant.source && (
+                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold ${
+                    selectedGrant.source === 'Grants.gov' ? 'bg-blue-100 text-blue-700'
+                    : 'bg-amber-100 text-amber-700'
+                  }`}>
+                    {selectedGrant.source}
+                  </span>
+                )}
+                {selectedGrant.status && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+                    {selectedGrant.status}
+                  </span>
+                )}
+                {selectedGrant.amount && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-50 text-green-700">
+                    <Coins className="w-3 h-3" /> {selectedGrant.amount}
+                  </span>
+                )}
+                {selectedGrant.deadline && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-700">
+                    <Calendar className="w-3 h-3" /> {selectedGrant.deadline}
+                  </span>
+                )}
+              </div>
+
+              {/* Eligibility */}
+              {selectedGrant.eligibility && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/40 mb-2">Eligibility</h4>
+                  <p className="text-sm text-secondary/70">{selectedGrant.eligibility}</p>
+                </div>
+              )}
+
+              {/* Tags */}
+              {(selectedGrant.tags || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/40 mb-2">Categories</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedGrant.tags.map((tag) => (
+                      <span key={tag} className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/15 text-secondary">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Description */}
+              {selectedGrant.description && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/40 mb-2">Description</h4>
+                  <div className="text-sm text-secondary/70 leading-relaxed whitespace-pre-line">
+                    {selectedGrant.description}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-secondary/10 px-6 py-4 flex items-center justify-between gap-3 rounded-b-3xl">
+              <p className="text-xs text-secondary/40">
+                via {selectedGrant.source}
+              </p>
+              <div className="flex items-center gap-3">
+                {selectedGrant.url && (
+                  <a
+                    href={selectedGrant.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 transition-colors"
+                  >
+                    View on {selectedGrant.source} <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                {selectedGrant.url && (
+                  <a
+                    href={selectedGrant.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-secondary hover:bg-accent transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" /> Apply Now
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>
