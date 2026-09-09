@@ -2,7 +2,6 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import {
   navLinks as defaultNav,
   heroStats as defaultHeroStats,
-  testimonials as defaultTestimonials,
   collaborators as defaultCollaborators,
   footerLinks as defaultFooterLinks,
   contactInfo as defaultContactInfo,
@@ -13,6 +12,11 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 // Fully-populated default content so the site works even if the DB is empty.
 const defaults = {
+  branding: {
+    name: 'Talent Bridge',
+    tagline: 'A · I',
+    logo: '',
+  },
   hero: {
     badge: 'AI-POWERED RECRUITMENT',
     titlePrefix: 'Hire ',
@@ -48,14 +52,6 @@ const defaults = {
     body: 'Join 1,200+ companies using Talent Bridge AI to build world-class teams in record time.',
     buttonText: 'Book a Demo',
   },
-  testimonialsHeading: {
-    eyebrow: 'What Our Customers Say',
-    title: 'Loved by ',
-    titleHighlight: 'hiring teams',
-    titleSuffix: ' worldwide.',
-    body: 'From scrappy startups to Fortune 500s — see why teams choose Talent Bridge AI.',
-  },
-  testimonials: defaultTestimonials,
   partnersHeading: {
     eyebrow: 'Trusted By Industry Leaders',
     title: 'Powering hiring at ',
@@ -95,27 +91,27 @@ export function ContentProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   // Deep-merge DB content over the defaults. Empty/blank strings and empty
-  // arrays from the DB are ignored so unseeded fields fall back to the
-  // shipped defaults.
+  // DB is the source of truth: DB values (even empty) override the shipped
+  // defaults. Defaults are only used for fields the DB doc doesn't have at all,
+  // so clearing a field in the CMS actually clears it on the site.
   const merge = useCallback((db) => {
     const out = { ...defaults };
-    const isEmpty = (v) => v === '' || v === null || v === undefined || (Array.isArray(v) && v.length === 0);
+    if (!db) return out;
     for (const key of Object.keys(defaults)) {
-      if (db && db[key] !== undefined) {
-        if (
-          typeof defaults[key] === 'object' &&
-          !Array.isArray(defaults[key]) &&
-          defaults[key] !== null
-        ) {
-          const merged = {};
-          for (const f of Object.keys(defaults[key])) {
-            const dbf = db[key] && db[key][f];
-            merged[f] = isEmpty(dbf) ? defaults[key][f] : dbf;
-          }
-          out[key] = merged;
-        } else {
-          out[key] = isEmpty(db[key]) ? defaults[key] : db[key];
+      if (db[key] === undefined) continue;
+      if (
+        typeof defaults[key] === 'object' &&
+        !Array.isArray(defaults[key]) &&
+        defaults[key] !== null
+      ) {
+        const merged = { ...defaults[key] };
+        const src = db[key] || {};
+        for (const f of Object.keys(merged)) {
+          if (src[f] !== undefined) merged[f] = src[f];
         }
+        out[key] = merged;
+      } else {
+        out[key] = db[key];
       }
     }
     return out;

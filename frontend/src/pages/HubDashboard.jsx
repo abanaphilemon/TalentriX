@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Network,
   Copy,
@@ -10,13 +10,135 @@ import {
   Eye,
   CheckCircle2,
   Sparkles,
+  Building2,
+  Star,
+  BadgeCheck,
+  ImagePlus,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useContent } from '../context/ContentContext.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+const inputCls =
+  'w-full px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all text-sm';
+
+// Stars renderer for compact card badges
+function StarRow({ rating }) {
+  return (
+    <div className="inline-flex items-center gap-0.5" title={`${rating}/5`}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Star key={i} className={`w-3.5 h-3.5 ${i <= rating ? 'fill-primary text-primary' : 'text-secondary/20'}`} />
+      ))}
+    </div>
+  );
+}
+
+// Rate & recommend panel shown inside the talent modal
+function EndorsePanel({ seeker, token, hubName, onSaved }) {
+  const [rating, setRating] = useState(seeker.hubRating || 0);
+  const [recommend, setRecommend] = useState(!!seeker.hubRecommend);
+  const [note, setNote] = useState(seeker.hubNote || '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const save = async () => {
+    setSaving(true);
+    setMsg('');
+    try {
+      const res = await fetch(`${API_URL}/hub/rate/${seeker.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rating, recommend, note }),
+      });
+      const d = await res.json();
+      if (res.ok) {
+        onSaved(d.seeker);
+        setMsg('Endorsement saved — the badge is live on their portfolio.');
+      } else {
+        setMsg(d.message || 'Could not save endorsement.');
+      }
+    } catch {
+      setMsg('Could not connect to server.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-secondary/10 bg-secondary/[0.02] p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <BadgeCheck className="w-4 h-4 text-primary" />
+        <h4 className="font-display font-bold text-secondary">Rate & recommend</h4>
+      </div>
+
+      <div className="text-xs font-semibold text-secondary/50 mb-2">Quality of this talent</div>
+      <div className="flex items-center gap-1 mb-1">
+        {[1, 2, 3, 4, 5].map((i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => setRating(i)}
+            className={`p-0.5 rounded-lg hover:scale-110 transition-transform ${
+              i <= rating ? 'text-primary' : 'text-secondary/20'
+            }`}
+            aria-label={`${i} star`}
+          >
+            <Star className={`w-7 h-7 ${i <= rating ? 'fill-primary' : ''}`} />
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-secondary/40 mb-4">
+        {rating === 0 ? 'Tap a star to rate this talent.' : `${rating} / 5 stars`}
+      </p>
+
+      <label className="flex items-start gap-2.5 mb-4 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={recommend}
+          onChange={(e) => setRecommend(e.target.checked)}
+          className="mt-0.5 w-4 h-4 accent-primary"
+        />
+<span className="text-sm text-secondary">
+            <span className="font-semibold">Recommend publicly</span>
+            <span className="block text-xs text-secondary/50">
+              Adds a “recommended by {hubName || 'your hub'}” badge to their portfolio.
+            </span>
+          </span>
+      </label>
+
+      <label className="block text-xs font-semibold text-secondary/50 mb-1.5">
+        Endorsement note <span className="font-normal">(optional)</span>
+      </label>
+      <textarea
+        rows={2}
+        className={inputCls}
+        placeholder="e.g. Reliable, sharp and delivers great work."
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        maxLength={200}
+      />
+
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+          {rating > 0 || recommend ? 'Save endorsement' : 'Save'}
+        </button>
+        {msg && <span className={`text-xs ${msg.includes('saved') ? 'text-emerald-700' : 'text-amber-700'}`}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function HubDashboard() {
   const { user, signOut } = useAuth();
+  const { content } = useContent();
+  const branding = content.branding || {};
   const [link, setLink] = useState('');
   const [count, setCount] = useState(0);
   const [seekers, setSeekers] = useState([]);
@@ -24,6 +146,13 @@ export default function HubDashboard() {
   const [loadingSeekers, setLoadingSeekers] = useState(false);
   const [copied, setCopied] = useState(false);
   const [viewing, setViewing] = useState(null);
+  // Organization profile state (shown on the landing partners section)
+  const [orgName, setOrgName] = useState(user?.company || '');
+  const [orgLogo, setOrgLogo] = useState(user?.logo || '');
+  const [orgSaving, setOrgSaving] = useState(false);
+  const [orgMsg, setOrgMsg] = useState('');
+  const [orgReading, setOrgReading] = useState(false);
+  const logoRef = useRef(null);
 
   const token = localStorage.getItem('tbai.token');
 
@@ -77,6 +206,53 @@ export default function HubDashboard() {
     }
   };
 
+  const onLogoFile = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setOrgMsg('Please choose an image file.');
+      return;
+    }
+    if (file.size > 1 * 1024 * 1024) {
+      setOrgMsg('Logo is too large — please use an image under 1 MB.');
+      return;
+    }
+    setOrgMsg('');
+    setOrgReading(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setOrgLogo(reader.result);
+      setOrgReading(false);
+      setOrgMsg('Logo ready — press “Save partner info” to keep it.');
+    };
+    reader.onerror = () => {
+      setOrgMsg('Could not read that image. Try another.');
+      setOrgReading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveOrg = async () => {
+    setOrgSaving(true);
+    setOrgMsg('');
+    try {
+      const res = await fetch(`${API_URL}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ company: orgName, logo: orgLogo }),
+      });
+      if (res.ok) {
+        setOrgMsg('Saved — your organization now appears as a partner on the site.');
+        setTimeout(() => setOrgMsg(''), 3000);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setOrgSaving(false);
+    }
+  };
+
   const initials = (name = '') =>
     name
       .split(' ')
@@ -92,10 +268,14 @@ export default function HubDashboard() {
       <header className="bg-white border-b border-secondary/10 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Network className="w-4 h-4 text-secondary" />
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden">
+              {branding.logo ? (
+                <img src={branding.logo} alt={`${branding.name || 'Talent Bridge'} logo`} className="w-full h-full object-contain p-0.5" />
+              ) : (
+                <Network className="w-4 h-4 text-secondary" />
+              )}
             </div>
-            <span className="font-display font-bold text-secondary">Talent Bridge</span>
+            <span className="font-display font-bold text-secondary">{branding.name || 'Talent Bridge'}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-secondary/60 hidden sm:inline">
@@ -163,6 +343,102 @@ export default function HubDashboard() {
           </div>
         </div>
 
+        {/* Organization profile card — feeds the landing partners section */}
+        <div className="bg-white rounded-2xl border border-secondary/10 p-6 mb-6">
+          <div className="flex items-center gap-2 mb-1">
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-secondary" />
+            </div>
+            <div>
+              <h2 className="font-display font-bold text-secondary">Organization profile</h2>
+              <p className="text-xs text-secondary/50">
+                Your registered organization is shown automatically in the partners section of the
+                landing page. Customize how it appears.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1.5">
+                Organization name
+              </label>
+              <input
+                value={orgName}
+                onChange={(e) => setOrgName(e.target.value)}
+                placeholder={user?.name || 'Organization name'}
+                className="w-full px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+              />
+              <p className="text-xs text-secondary/50 mt-1">
+                Leave blank to use your account name as the partner name.
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-secondary mb-1.5">
+                Logo image
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  value={orgLogo}
+                  onChange={(e) => setOrgLogo(e.target.value)}
+                  placeholder="https://…/logo.png or upload below"
+                  className="flex-1 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+                />
+                {orgLogo && (
+                  <div className="relative shrink-0">
+                    <img
+                      src={orgLogo}
+                      alt="logo preview"
+                      className="w-11 h-11 rounded-full bg-white ring-1 ring-secondary/10 object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setOrgLogo('')}
+                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                      aria-label="Remove logo"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  ref={logoRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={onLogoFile}
+                />
+                <button
+                  type="button"
+                  onClick={() => logoRef.current?.click()}
+                  disabled={orgReading}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/5 hover:bg-secondary/10 text-xs font-semibold text-secondary transition-colors disabled:opacity-60"
+                >
+                  {orgReading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
+                  Upload logo
+                </button>
+                <span className="text-[11px] text-secondary/40">
+                  JPG or PNG under 1 MB — leave blank for an auto-generated logo.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              onClick={saveOrg}
+              disabled={orgSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-secondary text-white text-sm font-semibold hover:bg-accent disabled:opacity-60 transition-colors"
+            >
+              {orgSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              Save partner info
+            </button>
+            {orgMsg && <span className="text-xs text-emerald-700">{orgMsg}</span>}
+          </div>
+        </div>
+
         {/* Seekers list */}
         <div className="flex items-center gap-2 mb-4">
           <h2 className="font-display text-lg font-bold text-secondary">
@@ -197,6 +473,16 @@ export default function HubDashboard() {
                   </div>
                 </div>
                 {s.title && <div className="text-sm text-secondary/70 mb-2">{s.title}</div>}
+                {(s.hubRating > 0 || s.hubRecommend) && (
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    {s.hubRating > 0 && <StarRow rating={s.hubRating} />}
+                    {s.hubRecommend && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-secondary bg-primary/15 px-2 py-0.5 rounded-full">
+                        <BadgeCheck className="w-3.5 h-3.5" /> Recommended
+                      </span>
+                    )}
+                  </div>
+                )}
                 {(s.skills || []).length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mb-3">
                     {s.skills.slice(0, 4).map((skill) => (
@@ -258,6 +544,18 @@ export default function HubDashboard() {
                   <p className="text-sm text-secondary/80">{viewing.summary}</p>
                 </div>
               )}
+
+              <EndorsePanel
+                key={viewing.id}
+                seeker={viewing}
+                token={token}
+                hubName={user?.company || user?.name}
+                onSaved={(updated) => {
+                  setSeekers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                  setViewing(updated);
+                }}
+              />
+
               <div className="inline-flex items-center gap-1 text-xs text-emerald-700">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Registered via your link
               </div>

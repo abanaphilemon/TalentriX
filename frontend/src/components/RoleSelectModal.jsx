@@ -1,12 +1,15 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ArrowRight, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useContent } from '../context/ContentContext.jsx';
 import { roles } from '../data/content.js';
 
 // First step of the Get Started flow — pick one of 3 roles
 export default function RoleSelectModal() {
   const { mode, closeAuth, selectRole, role } = useAuth();
+  const { content } = useContent();
   const open = mode === 'role';
+  const brandName = content.branding?.name || 'Talent Bridge AI';
 
   return (
     <AnimatePresence>
@@ -51,7 +54,7 @@ export default function RoleSelectModal() {
                   id="role-title"
                   className="font-display text-2xl md:text-3xl font-bold text-secondary"
                 >
-                  Welcome to Talent Bridge AI
+                  Welcome to {brandName}
                 </h2>
               </div>
               <p className="text-secondary/70 text-sm md:text-base mb-8">

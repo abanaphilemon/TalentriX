@@ -6,7 +6,7 @@ import { Network, UserSearch, Briefcase } from 'lucide-react';
 export const navLinks = [
   { label: 'Home', href: '#home' },
   { label: 'About', href: '#about' },
-  { label: 'Testimonials', href: '#testimonials' },
+  { label: 'Reviews', href: '#reviews' },
   { label: 'Partners', href: '#partners' },
   { label: 'Contact', href: '#contact' },
 ];
@@ -15,30 +15,6 @@ export const heroStats = [
   { value: '50K+', label: 'Talent Matches' },
   { value: '92%', label: 'Placement Success' },
   { value: '1,200+', label: 'Partner Companies' },
-];
-
-export const testimonials = [
-  {
-    quote:
-      'Talent Bridge AI cut our hiring time in half. The matches are uncannily accurate — every candidate has been a top performer.',
-    name: 'Sarah Chen',
-    role: 'Head of People, Nimbus',
-    avatar: 'https://ui-avatars.com/api/?name=Sarah+Chen&background=FFD700&color=000&size=128',
-  },
-  {
-    quote:
-      'We discovered engineers we never would have found through traditional sourcing. The AI understands culture fit, not just keywords.',
-    name: 'Marcus Johnson',
-    role: 'CTO, Vertex Labs',
-    avatar: 'https://ui-avatars.com/api/?name=Marcus+Johnson&background=000&color=FFD700&size=128',
-  },
-  {
-    quote:
-      'Our pipeline went from chaos to clarity. The platform surfaces hidden gems and predicts candidate success with scary accuracy.',
-    name: 'Priya Patel',
-    role: 'Recruiting Lead, Helix',
-    avatar: 'https://ui-avatars.com/api/?name=Priya+Patel&background=FFD700&color=000&size=128',
-  },
 ];
 
 // 6 collaborators — 2 rows x 3 cols
@@ -73,10 +49,10 @@ export const collaborators = [
 
 export const footerLinks = {
   quick: [
-    { label: 'Home',         href: '#home' },
-    { label: 'About',        href: '#about' },
-    { label: 'Testimonials', href: '#testimonials' },
-    { label: 'Contact',      href: '#contact' },
+    { label: 'Home',           href: '#home' },
+    { label: 'About',          href: '#about' },
+    { label: 'Reviews',        href: '#reviews' },
+    { label: 'Contact',        href: '#contact' },
   ],
   resources: [
     { label: 'Documentation', href: '#' },

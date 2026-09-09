@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { ensureKeys } from '../lib/e2e.js';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -10,6 +11,13 @@ const STORAGE = {
 };
 
 const AuthContext = createContext(null);
+
+// Generate (if needed) the browser's E2E public key and store it so other
+// people can start a secure chat with this account right away.
+function registerChatKey(token) {
+  if (!token) return;
+  ensureKeys(token).catch(() => {});
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -42,6 +50,7 @@ export function AuthProvider({ children }) {
           if (u) {
             setUser(u);
             setRole(savedRole);
+            registerChatKey(token);
           } else {
             localStorage.removeItem(STORAGE.token);
             localStorage.removeItem(STORAGE.role);
@@ -111,6 +120,7 @@ export function AuthProvider({ children }) {
       setRole(data.user.role);
       localStorage.setItem(STORAGE.role, data.user.role);
       setMode('closed');
+      registerChatKey(data.token);
       return { ok: true, user: data.user };
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
@@ -138,6 +148,7 @@ export function AuthProvider({ children }) {
       setRole(data.user.role);
       localStorage.setItem(STORAGE.role, data.user.role);
       setMode('closed');
+      registerChatKey(data.token);
       return { ok: true, user: data.user };
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };

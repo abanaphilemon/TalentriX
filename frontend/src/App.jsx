@@ -7,7 +7,6 @@ import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
 import CtaSection from './components/CtaSection.jsx';
 import About from './components/About.jsx';
-import Testimonials from './components/Testimonials.jsx';
 import Reviews from './components/Reviews.jsx';
 import Collaborators from './components/Collaborators.jsx';
 import Contact from './components/Contact.jsx';
@@ -16,6 +15,7 @@ import RoleSelectModal from './components/RoleSelectModal.jsx';
 import AuthPage from './components/AuthPage.jsx';
 import HubDashboard from './pages/HubDashboard.jsx';
 import SeekerDashboard from './pages/SeekerDashboard.jsx';
+import PortfolioPage from './pages/PortfolioPage.jsx';
 import EmployerDashboard from './pages/EmployerDashboard.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import AdminLoginPage from './pages/AdminLoginPage.jsx';
@@ -68,7 +68,6 @@ function LandingPage() {
         <Hero />
         <CtaSection />
         <About />
-        <Testimonials />
         <Reviews />
         <Collaborators />
         <Contact />
@@ -121,6 +120,9 @@ export default function App() {
 
               {/* Registration page — reached via a hub's unique link (e.g. /register?ref=abc123) */}
               <Route path="/register" element={<RegisterPage />} />
+
+              {/* Public portfolio page — auto-generated from a job seeker's profile */}
+              <Route path="/portfolio/:id" element={<PortfolioPage />} />
 
               {/* Role-specific dashboards (blank placeholders) */}
               <Route

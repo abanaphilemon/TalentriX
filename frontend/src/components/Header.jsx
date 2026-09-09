@@ -4,25 +4,34 @@ import { Menu, X, Sparkles, LogOut, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 
-// Logo mark — small "TB" with a gold accent
-const LogoMark = () => (
-  <div className="flex items-center gap-2">
-    <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30">
-      <span className="text-primary font-display font-bold text-lg leading-none">
-        TB
-      </span>
-      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white" />
+// Logo mark — brand logo (or "TB" fallback) with gold accent
+const LogoMark = ({ branding }) => {
+  const name = branding?.name || 'Talent Bridge';
+  const tagline = branding?.tagline || 'A · I';
+  const logo = branding?.logo;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30 overflow-hidden">
+        {logo ? (
+          <img src={logo} alt={`${name} logo`} className="w-full h-full object-contain p-1" />
+        ) : (
+          <span className="text-primary font-display font-bold text-lg leading-none">
+            TB
+          </span>
+        )}
+        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white" />
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="font-display font-bold text-secondary text-lg">
+          {name}
+        </span>
+        <span className="text-[10px] font-semibold tracking-widest text-secondary/60 -mt-1">
+          {tagline}
+        </span>
+      </div>
     </div>
-    <div className="flex flex-col leading-tight">
-      <span className="font-display font-bold text-secondary text-lg">
-        Talent Bridge
-      </span>
-      <span className="text-[10px] font-semibold tracking-widest text-secondary/60 -mt-1">
-        A · I
-      </span>
-    </div>
-  </div>
-);
+  );
+};
 
 // User pill — replaces the "Get Started" button when signed in
 const UserPill = ({ user, roleLabel, onSignOut, onOpenAuth }) => {
@@ -137,7 +146,7 @@ export default function Header() {
         >
           {/* Logo */}
           <a href="#home" className="shrink-0">
-            <LogoMark />
+            <LogoMark branding={content.branding} />
           </a>
 
           {/* Desktop nav */}

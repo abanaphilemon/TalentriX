@@ -21,6 +21,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useContent } from '../context/ContentContext.jsx';
 import { roles } from '../data/content.js';
 
 // Inline Google "G" mark — used in the fallback button when GIS hasn't loaded
@@ -56,12 +57,12 @@ function hasClientId() {
 }
 
 // Hero copy + icon for the left column — switches based on role
-function roleBranding(roleId) {
+function roleBranding(roleId, brandName) {
   const r = roles.find((x) => x.id === roleId);
   const Icon = r?.Icon || Network;
   return {
     Icon,
-    title: r?.title || 'Talent Bridge AI',
+    title: r?.title || brandName,
     badge: r?.badge || 'Welcome',
     tagline:
       roleId === 'hub'
@@ -137,6 +138,9 @@ export default function AuthPage() {
   const [tab, setTab] = useState('login');    // 'login' | 'register'
   const [submitError, setSubmitError] = useState('');
 
+  const { content } = useContent();
+  const brandName = content.branding?.name || 'Talent Bridge AI';
+
   const {
     register,
     handleSubmit,
@@ -153,7 +157,7 @@ export default function AuthPage() {
   }, [mode, reset]);
 
   const open = mode === 'auth';
-  const { Icon, title, badge, tagline } = roleBranding(role);
+  const { Icon, title, badge, tagline } = roleBranding(role, brandName);
 
   // ───── Submit handlers ─────
   const onSubmitLogin = async (data) => {
@@ -214,9 +218,10 @@ export default function AuthPage() {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.97, y: 10 }}
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
-            className="fixed inset-0 z-[70] flex p-4 pointer-events-none overflow-y-auto"
+            className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain pointer-events-none"
           >
-            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-hidden grid md:grid-cols-2 m-auto">
+            <div className="min-h-full flex flex-col justify-center pointer-events-none p-4">
+            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-hidden grid md:grid-cols-2">
               {/* ───── Left brand panel ───── */}
               <div className="relative bg-secondary text-tertiary p-8 md:p-10 hidden md:flex flex-col justify-between overflow-hidden">
                 {/* Decorative gold blobs */}
@@ -275,7 +280,7 @@ export default function AuthPage() {
                 </div>
 
                 <div className="relative mt-8 pt-6 border-t border-white/10 text-xs text-white/50">
-                  © {new Date().getFullYear()} Talent Bridge AI
+                  © {new Date().getFullYear()} {brandName}
                 </div>
               </div>
 
@@ -476,6 +481,7 @@ export default function AuthPage() {
                   .
                 </p>
               </div>
+            </div>
             </div>
           </motion.div>
         </>
