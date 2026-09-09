@@ -33,8 +33,8 @@ export default function AdminLoginPage() {
 
   // Already logged in as admin → AdminRoute sends straight to the CMS.
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 bg-hero-gradient">
-      <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 md:p-10">
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 bg-hero-gradient">
+      <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-6 sm:p-8 md:p-10">
         <div className="flex flex-col items-center text-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30 mb-4">
             <ShieldCheck className="w-7 h-7 text-secondary" />

@@ -11,7 +11,7 @@ This folder contains the backend code for Talent Bridge AI.
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v18 or higher)
 - MongoDB (installed and running locally on the default port 27017)
 
 ### Installation
@@ -42,18 +42,6 @@ To start the development server:
 
 ```bash
 npm start
-```
-
-Note: We haven't defined a "start" script in package.json yet. You can run the server directly with:
-
-```bash
-node server.js
-```
-
-For development with auto-restart:
-
-```bash
-npm dev
 ```
 
 The server will run on `http://localhost:5000` by default.

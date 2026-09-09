@@ -88,7 +88,7 @@ function Field({ label, type = 'text', placeholder, error, register, name, icon:
           type={type}
           placeholder={placeholder}
           {...register(name)}
-          className={`w-full pl-10 pr-${children ? '10' : '4'} py-3 rounded-xl bg-white/80 border outline-none transition-all ${
+          className={`w-full pl-10 ${children ? 'pr-10' : 'pr-4'} py-3 rounded-xl bg-white/80 border outline-none transition-all ${
             error
               ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200'
               : 'border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30'
@@ -285,7 +285,7 @@ export default function AuthPage() {
               </div>
 
               {/* ───── Right form panel ───── */}
-              <div className="relative p-8 md:p-10">
+              <div className="relative p-5 sm:p-8 md:p-10">
                 {/* Close (top-right) */}
                 <button
                   onClick={closeAuth}
@@ -341,18 +341,20 @@ export default function AuthPage() {
 
                 {/* ───── Google button ───── */}
                 {hasClientId() ? (
-                  <div className="flex justify-center">
-                    <GoogleLogin
-                      onSuccess={onGoogleSuccess}
-                      onError={onGoogleError}
-                      useOneTap={false}
-                      theme="outline"
-                      size="large"
-                      shape="pill"
-                      text={tab === 'login' ? 'signin_with' : 'signup_with'}
-                      logo_alignment="left"
-                      width="320"
-                    />
+                  <div className="flex justify-center w-full">
+                    <div className="w-full max-w-[320px]">
+                      <GoogleLogin
+                        onSuccess={onGoogleSuccess}
+                        onError={onGoogleError}
+                        useOneTap={false}
+                        theme="outline"
+                        size="large"
+                        shape="pill"
+                        text={tab === 'login' ? 'signin_with' : 'signup_with'}
+                        logo_alignment="left"
+                        width="320"
+                      />
+                    </div>
                   </div>
                 ) : (
                   <button

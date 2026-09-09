@@ -9,8 +9,11 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
+const corsOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',')
+  : ['http://localhost:5173', 'http://localhost:5174'];
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
+  origin: corsOrigins,
   credentials: true,
 }));
 // Allow larger payloads (CV/logo uploads are stored as data URLs)
@@ -206,9 +209,8 @@ function publicUser(u) {
   };
 }
 
-// Overwrite a public-user object's contact fields with blurred placeholders.
-// Real contact details are only revealed once the two parties are in an
-// active chat (see the /api/seekers route).
+// Overwrite a public-user object's contact fields with masked placeholders.
+// Real contact details are never exposed on the talent-pool list.
 function lockContacts(u) {
   return {
     ...u,
@@ -1065,6 +1067,16 @@ app.post('/api/chat/messages', authenticateToken, async (req, res) => {
     if (!chatPairOk(me, other)) {
       return res.status(403).json({ message: 'Chats are available between employers and job seekers only' });
     }
+
+    // Payment gate: employers must pay to message a new seeker.
+    // Seekers replying to employers are always allowed.
+    if (me.role === 'employer' && other.role === 'seeker') {
+      const hasPaid = await ChatPayment.findOne({ employerId: me._id, seekerId: other._id, status: 'paid' });
+      if (!hasPaid) {
+        return res.status(402).json({ message: 'Payment required', code: 'PAYMENT_REQUIRED' });
+      }
+    }
+
     await provisionKeys(other);
 
     const msg = await Message.create({ from: me._id, to: other._id, iv, ct });
@@ -1096,13 +1108,14 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     }
     const seekers = await User.find(filter).select('-password').sort({ createdAt: -1 });
 
-    // Contact details stay locked until the seeker has replied inside a secure
-    // chat with this employer. Hubs see their members' real contacts separately.
+    // Contact details always stay locked in the talent pool so real emails
+    // are never exposed on this page.  The contactLocked flag still reflects
+    // whether the seeker has replied (for UI hints), but the actual email is
+    // always replaced with a mask here.
     const me = req.user.userId;
     const out = await Promise.all(
       seekers.map(async (s) => {
-        const replied = await Message.countDocuments({ from: s._id, to: me });
-        return replied > 0 ? publicUser(s) : lockContacts(publicUser(s));
+        return lockContacts(publicUser(s));
       })
     );
 
@@ -1330,6 +1343,353 @@ app.delete('/api/admin/reviews/:id', authenticateToken, async (req, res) => {
     res.json({ message: 'Review deleted' });
   } catch (error) {
     console.error('Review delete error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Grant catalog — hubs create grants that their talent pool can discover.
+const Grant = mongoose.model('Grant', new mongoose.Schema({
+  hubId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, required: true, trim: true },
+  description: { type: String, default: '' },
+  amount: { type: String, default: '' },
+  deadline: { type: String, default: '' },
+  eligibility: { type: String, default: '' },
+  link: { type: String, default: '' },
+  tags: { type: [String], default: [] },
+  status: { type: String, enum: ['open', 'closed', 'upcoming'], default: 'open' },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// ── Grant Catalog CRUD (hub only) ────────────────────────────────────────────
+
+// List grants for this hub
+app.get('/api/hub/grants', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const grants = await Grant.find({ hubId: req.user.userId }).sort({ createdAt: -1 });
+    res.json({ grants });
+  } catch (error) {
+    console.error('Grant list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create a grant
+app.post('/api/hub/grants', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const { title, description, amount, deadline, eligibility, link, tags, status } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ message: 'Title is required' });
+    const grant = new Grant({
+      hubId: req.user.userId,
+      title: title.trim(),
+      description: description || '',
+      amount: amount || '',
+      deadline: deadline || '',
+      eligibility: eligibility || '',
+      link: link || '',
+      tags: Array.isArray(tags) ? tags : [],
+      status: status || 'open',
+    });
+    await grant.save();
+    res.status(201).json({ grant });
+  } catch (error) {
+    console.error('Grant create error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update a grant
+app.put('/api/hub/grants/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const grant = await Grant.findOne({ _id: req.params.id, hubId: req.user.userId });
+    if (!grant) return res.status(404).json({ message: 'Grant not found' });
+    const { title, description, amount, deadline, eligibility, link, tags, status } = req.body;
+    if (title !== undefined) grant.title = title.trim();
+    if (description !== undefined) grant.description = description;
+    if (amount !== undefined) grant.amount = amount;
+    if (deadline !== undefined) grant.deadline = deadline;
+    if (eligibility !== undefined) grant.eligibility = eligibility;
+    if (link !== undefined) grant.link = link;
+    if (tags !== undefined) grant.tags = Array.isArray(tags) ? tags : [];
+    if (status !== undefined) grant.status = status;
+    await grant.save();
+    res.json({ grant });
+  } catch (error) {
+    console.error('Grant update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete a grant
+app.delete('/api/hub/grants/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const grant = await Grant.findOneAndDelete({ _id: req.params.id, hubId: req.user.userId });
+    if (!grant) return res.status(404).json({ message: 'Grant not found' });
+    res.json({ message: 'Grant deleted' });
+  } catch (error) {
+    console.error('Grant delete error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Payment / Monnify Integration ────────────────────────────────────────────
+
+const fetch = globalThis.fetch || (() => { throw new Error('fetch not available'); });
+
+// Site-level configuration (Monnify keys, pricing, etc.)
+const SiteConfig = mongoose.model('SiteConfig', new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: mongoose.Schema.Types.Mixed, default: {} },
+}));
+
+// Tracks which employer has paid to chat with which seeker.
+const ChatPayment = mongoose.model('ChatPayment', new mongoose.Schema({
+  employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  amount: { type: Number, required: true },
+  paymentRef: { type: String, default: '' },
+  monnifyRef: { type: String, default: '' },
+  status: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now },
+  paidAt: { type: Date },
+}));
+
+async function getConfig(key) {
+  const doc = await SiteConfig.findOne({ key });
+  return doc ? doc.value : null;
+}
+async function setConfig(key, value) {
+  await SiteConfig.findOneAndUpdate({ key }, { key, value }, { upsert: true });
+}
+
+const MONNIFY_BASE_PROD = 'https://api.monnify.com';
+const MONNIFY_BASE_SANDBOX = 'https://sandbox.monnify.com';
+
+async function monnifyToken() {
+  const cfg = await getConfig('monnify');
+  if (!cfg?.apiKey || !cfg?.secretKey) return null;
+  const baseUrl = cfg.environment === 'sandbox' ? MONNIFY_BASE_SANDBOX : MONNIFY_BASE_PROD;
+  const auth = Buffer.from(`${cfg.apiKey}:${cfg.secretKey}`).toString('base64');
+  const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) return null;
+  const d = await res.json();
+  return { token: d.responseBody?.accessToken || null, baseUrl };
+}
+
+// ── Admin: Monnify config ─────────────────────────────────────────────────
+
+app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const val = await getConfig(req.params.key);
+    res.json({ value: val || {} });
+  } catch (error) {
+    console.error('Config get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    await setConfig(req.params.key, req.body.value || {});
+    res.json({ message: 'Config saved' });
+  } catch (error) {
+    console.error('Config set error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Payment endpoints ──────────────────────────────────────────────────────
+
+// Get chat price for display
+app.get('/api/payment/price', authenticateToken, async (req, res) => {
+  try {
+    const cfg = await getConfig('chatPricing');
+    res.json({
+      amount: cfg?.amount || 5000,
+      vatRate: cfg?.vatRate || 0.075,
+      serviceCharge: cfg?.serviceCharge || 100,
+      currency: cfg?.currency || 'NGN',
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Check if employer has paid for a specific seeker
+app.get('/api/payment/check/:seekerId', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    const existing = await ChatPayment.findOne({
+      employerId: req.user.userId,
+      seekerId: req.params.seekerId,
+      status: 'paid',
+    });
+    res.json({ paid: !!existing });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Initialize a payment (creates Monnify transaction, returns checkout URL)
+app.post('/api/payment/init', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    const { seekerId } = req.body;
+    if (!seekerId) return res.status(400).json({ message: 'seekerId required' });
+
+    // Check if already paid
+    const existing = await ChatPayment.findOne({
+      employerId: req.user.userId, seekerId, status: 'paid',
+    });
+    if (existing) return res.json({ paid: true });
+
+    const cfg = await getConfig('monnify');
+    if (!cfg?.apiKey || !cfg?.secretKey || !cfg?.contractCode) {
+      return res.status(503).json({ message: 'Payment not configured. Contact admin.' });
+    }
+    const pricing = await getConfig('chatPricing');
+    const base = pricing?.amount || 5000;
+    const vatRate = pricing?.vatRate || 0.075;
+    const serviceCharge = pricing?.serviceCharge || 100;
+    const total = Math.round(base + base * vatRate + serviceCharge);
+
+    const employer = await User.findById(req.user.userId);
+    const seeker = await User.findById(seekerId);
+    if (!seeker) return res.status(404).json({ message: 'Seeker not found' });
+
+    const paymentRef = `TB-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Create pending record
+    await ChatPayment.findOneAndUpdate(
+      { employerId: req.user.userId, seekerId },
+      { employerId: req.user.userId, seekerId, amount: total, paymentRef, status: 'pending' },
+      { upsert: true },
+    );
+
+    const monnifyAuth = await monnifyToken();
+    if (!monnifyAuth?.token) return res.status(503).json({ message: 'Could not connect to payment provider.' });
+    const { token: monoToken, baseUrl } = monnifyAuth;
+
+    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/employer?payment=callback`;
+
+    const monoRes = await fetch(`${baseUrl}/api/v1/merchant/transactions/init-transaction`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${monoToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: total,
+        currencyCode: pricing?.currency || 'NGN',
+        paymentReference: paymentRef,
+        paymentDescription: `Chat access - ${employer.name} to ${seeker.name}`,
+        contractCode: cfg.contractCode,
+        redirectUrl,
+        customerEmail: employer.email,
+        customerName: employer.name,
+        paymentMethods: ['CARD', 'ACCOUNT_TRANSFER'],
+      }),
+    });
+
+    const monoData = await monoRes.json();
+    if (!monoData.responseBody?.checkoutUrl) {
+      console.error('Monnify init error:', JSON.stringify(monoData));
+      return res.status(502).json({
+        message: 'Could not initialize payment.',
+        detail: monoData.responseMessage || monoData.message || 'Unknown Monnify error',
+      });
+    }
+
+    res.json({
+      checkoutUrl: monoData.responseBody.checkoutUrl,
+      amount: total,
+      paymentRef,
+    });
+  } catch (error) {
+    console.error('Payment init error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify payment after redirect
+app.get('/api/payment/verify/:paymentRef', authenticateToken, async (req, res) => {
+  try {
+    const record = await ChatPayment.findOne({ paymentRef: req.params.paymentRef });
+    if (!record) return res.status(404).json({ message: 'Payment not found' });
+    if (record.status === 'paid') return res.json({ paid: true });
+
+    const cfg = await getConfig('monnify');
+    if (!cfg?.apiKey || !cfg?.secretKey) return res.status(503).json({ message: 'Payment not configured.' });
+
+    const monnifyAuth = await monnifyToken();
+    if (!monnifyAuth?.token) return res.status(503).json({ message: 'Could not connect to payment provider.' });
+    const { token: monoToken, baseUrl } = monnifyAuth;
+
+    const monoRes = await fetch(
+      `${baseUrl}/api/v1/merchant/transactions/query?paymentReference=${record.paymentRef}`,
+      { headers: { Authorization: `Bearer ${monoToken}` } },
+    );
+    const monoData = await monoRes.json();
+    const tx = monoData.responseBody;
+    if (tx && tx.paymentStatus === 'PAID') {
+      record.status = 'paid';
+      record.monnifyRef = tx.transactionReference || '';
+      record.paidAt = new Date();
+      await record.save();
+      return res.json({ paid: true });
+    }
+    res.json({ paid: false });
+  } catch (error) {
+    console.error('Payment verify error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Monnify webhook
+app.post('/api/payment/webhook', async (req, res) => {
+  try {
+    const body = req.body;
+    const ref = body.paymentReference || body.eventData?.paymentReference;
+    if (!ref) return res.status(200).json({ ok: true });
+
+    const record = await ChatPayment.findOne({ paymentRef: ref });
+    if (!record) return res.status(200).json({ ok: true });
+
+    const status = body.eventData?.paymentStatus || body.paymentStatus;
+    if (status === 'PAID') {
+      record.status = 'paid';
+      record.monnifyRef = body.eventData?.transactionReference || '';
+      record.paidAt = new Date();
+      await record.save();
+    } else if (status === 'FAILED') {
+      record.status = 'failed';
+      await record.save();
+    }
+    res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(200).json({ ok: true });
+  }
+});
+
+// List all payments for the current employer
+app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    const payments = await ChatPayment.find({ employerId: req.user.userId, status: 'paid' })
+      .select('seekerId amount paidAt')
+      .lean();
+    res.json({ payments });
+  } catch (error) {
     res.status(500).json({ message: 'Server error' });
   }
 });

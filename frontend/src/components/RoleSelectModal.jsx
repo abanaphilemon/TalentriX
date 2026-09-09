@@ -35,7 +35,7 @@ export default function RoleSelectModal() {
             transition={{ type: 'spring', stiffness: 260, damping: 24 }}
             className="fixed inset-0 z-[70] flex p-4 pointer-events-none overflow-y-auto"
           >
-            <div className="glass rounded-3xl p-8 md:p-10 shadow-2xl w-full max-w-3xl pointer-events-auto relative m-auto">
+            <div className="glass rounded-3xl p-5 sm:p-8 md:p-10 shadow-2xl w-full max-w-3xl pointer-events-auto relative m-auto">
               {/* Close */}
               <button
                 onClick={closeAuth}

@@ -22,6 +22,8 @@ import {
   X,
   Lock,
   MessageSquare,
+  CreditCard,
+  AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -51,7 +53,7 @@ export default function EmployerDashboard() {
   const { user, signOut } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
-  const [tab, setTab] = useState('profile'); // 'profile' | 'seekers'
+  const [tab, setTab] = useState('seekers'); // 'seekers' | 'profile'
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -71,6 +73,13 @@ export default function EmployerDashboard() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null);
   const [unread, setUnread] = useState(0);
+
+  // Payment gate
+  const [payModal, setPayModal] = useState(null); // seeker object or null
+  const [payLoading, setPayLoading] = useState(false);
+  const [payPrice, setPayPrice] = useState(null);
+  const [payMsg, setPayMsg] = useState('');
+  const [paidSeekers, setPaidSeekers] = useState(new Set());
 
   const token = localStorage.getItem('tbai.token');
 
@@ -119,6 +128,9 @@ export default function EmployerDashboard() {
 
   useEffect(() => {
     loadProfile();
+    loadSeekers();
+    loadPaymentInfo();
+    handlePaymentCallback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -209,7 +221,79 @@ export default function EmployerDashboard() {
     return () => clearInterval(iv);
   }, [token]);
 
+  // ── Payment helpers ──
+  const loadPaymentInfo = async () => {
+    try {
+      const [priceRes, paymentsRes] = await Promise.all([
+        fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/payment/my-payments`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (priceRes.ok) setPayPrice(await priceRes.json());
+      if (paymentsRes.ok) {
+        const d = await paymentsRes.json();
+        setPaidSeekers(new Set((d.payments || []).map((p) => p.seekerId)));
+      }
+    } catch { /* ignore */ }
+  };
+
+  const handlePaymentCallback = () => {
+    const params = new URLSearchParams(window.location.search);
+    const payRef = params.get('paymentRef');
+    if (!payRef) return;
+    // Verify payment after redirect from Monnify
+    fetch(`${API_URL}/payment/verify/${payRef}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.paid) {
+          loadPaymentInfo();
+          setPayMsg('Payment confirmed! You can now chat with this seeker.');
+          setTimeout(() => setPayMsg(''), 4000);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+      });
+  };
+
+  const initiatePayment = async (seeker) => {
+    setPayLoading(true);
+    setPayMsg('');
+    try {
+      const res = await fetch(`${API_URL}/payment/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ seekerId: seeker.id }),
+      });
+      const d = await res.json();
+      if (d.paid) {
+        setPaidSeekers((prev) => new Set([...prev, seeker.id]));
+        setPayModal(null);
+        openChat(seeker.id);
+        return;
+      }
+      if (d.checkoutUrl) {
+        window.location.href = d.checkoutUrl;
+        return;
+      }
+      setPayMsg(d.detail || d.message || 'Could not start payment.');
+    } catch {
+      setPayMsg('Could not connect to payment server.');
+    } finally {
+      setPayLoading(false);
+    }
+  };
+
   const openChat = (seed) => {
+    // Payment gate: if seeding a specific seeker, check if paid
+    if (seed && !paidSeekers.has(seed)) {
+      const seeker = seekers.find((s) => s.id === seed);
+      if (seeker) {
+        setPayModal(seeker);
+        return;
+      }
+    }
     setChatSeed(seed || null);
     setChatOpen(true);
   };
@@ -517,14 +601,10 @@ export default function EmployerDashboard() {
                       <div className="min-w-0">
                         <div className="font-semibold text-secondary truncate">{s.name}</div>
                         <div className="text-xs text-secondary/50 truncate">
-                          {s.contactLocked ? (
-                            <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
-                              <Lock className="w-3 h-3 shrink-0" />
-                              <span className="blur-[3px] select-none">{s.email}</span>
-                            </span>
-                          ) : (
-                            s.email
-                          )}
+                          <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
+                            <Lock className="w-3 h-3 shrink-0" />
+                            <span>••••••@•••••</span>
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -616,14 +696,10 @@ export default function EmployerDashboard() {
                 <div>
                   <h3 className="font-display text-xl font-bold">{viewing.name}</h3>
                   <p className="text-white/70 text-sm">
-                    {viewing.contactLocked ? (
-                      <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
-                        <Lock className="w-3 h-3 shrink-0" />
-                        <span className="blur-[3px] select-none">{viewing.email}</span>
-                      </span>
-                    ) : (
-                      viewing.email
-                    )}
+                    <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
+                      <Lock className="w-3 h-3 shrink-0" />
+                      <span>••••••@•••••</span>
+                    </span>
                   </p>
                   {viewing.title && <p className="text-white/60 text-sm mt-0.5">{viewing.title}</p>}
                 </div>
@@ -686,7 +762,7 @@ export default function EmployerDashboard() {
                 <div className="flex items-start gap-2 text-xs text-secondary bg-secondary/5 border border-secondary/10 rounded-xl px-3 py-2.5">
                   <Lock className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                   <p>
-                    Contact details are blurred until you connect. Start a secure chat — once they reply, their email,
+                    Contact details are hidden until you connect. Start a secure chat — once they reply, their email,
                     phone and links unlock here.
                   </p>
                 </div>
@@ -761,6 +837,99 @@ export default function EmployerDashboard() {
 
       {/* Secure end-to-end encrypted chat */}
       <SecureChat open={chatOpen} onClose={closeChat} seedId={chatSeed} />
+
+      {/* Payment success banner */}
+      {payMsg && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-white border border-emerald-200 text-emerald-800 px-5 py-3 rounded-2xl shadow-lg flex items-center gap-2 text-sm font-semibold animate-pop-in">
+          <CheckCircle2 className="w-4 h-4" />
+          {payMsg}
+        </div>
+      )}
+
+      {/* Payment modal */}
+      {payModal && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-secondary/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-pop-in">
+            <div className="bg-secondary text-white p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-secondary" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold">Unlock chat</h3>
+                  <p className="text-white/60 text-xs">One-time payment per job seeker</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <span className="font-display font-bold text-secondary text-sm">
+                    {payModal.name?.split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <div className="font-semibold text-secondary">{payModal.name}</div>
+                  {payModal.title && <div className="text-xs text-secondary/50">{payModal.title}</div>}
+                </div>
+              </div>
+
+              <div className="bg-secondary/5 rounded-2xl p-4 mb-5">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-secondary/60">Chat access fee</span>
+                  <span className="font-semibold text-secondary">₦{payPrice?.amount?.toLocaleString() || '5,000'}</span>
+                </div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-secondary/60">VAT (7.5%)</span>
+                  <span className="font-semibold text-secondary">
+                    ₦{payPrice ? Math.round(payPrice.amount * payPrice.vatRate).toLocaleString() : '375'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-secondary/60">Service charge</span>
+                  <span className="font-semibold text-secondary">₦{payPrice?.serviceCharge?.toLocaleString() || '100'}</span>
+                </div>
+                <div className="border-t border-secondary/10 pt-2 flex justify-between">
+                  <span className="font-bold text-secondary">Total</span>
+                  <span className="font-bold text-secondary">
+                    ₦{payPrice
+                      ? (payPrice.amount + Math.round(payPrice.amount * payPrice.vatRate) + payPrice.serviceCharge).toLocaleString()
+                      : '5,475'}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-secondary/50 mb-5">
+                This is a one-time payment to unlock secure chat with this job seeker. Once paid, you can message them freely.
+              </p>
+
+              {payMsg && (
+                <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {payMsg}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setPayModal(null); setPayMsg(''); }}
+                  className="flex-1 py-2.5 rounded-xl bg-secondary/5 text-secondary font-semibold hover:bg-secondary/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => initiatePayment(payModal)}
+                  disabled={payLoading}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                >
+                  {payLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                  Pay & unlock
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

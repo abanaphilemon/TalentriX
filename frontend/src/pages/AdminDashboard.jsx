@@ -21,6 +21,8 @@ import {
   X,
   Upload,
   Image as ImageIcon,
+  CreditCard,
+  Key,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -72,6 +74,13 @@ const SECTION_GROUPS = [
       { id: 'footer', label: 'Footer', desc: 'Tagline, links and newsletter blurb.' },
       { id: 'contactInfo', label: 'Contact Info', desc: 'Email, phone and address.' },
       { id: 'contactHeading', label: 'Contact Heading', desc: 'Heading for the contact section.' },
+    ],
+  },
+  {
+    id: 'payments',
+    label: 'Payments',
+    items: [
+      { id: 'payments', label: 'Monnify Config', desc: 'API keys, contract code, and chat pricing.', special: 'payments' },
     ],
   },
 ];
@@ -135,6 +144,128 @@ const ARRAY_FIELDS = {
 };
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
+
+function PaymentsConfig({ token }) {
+  const [monnify, setMonnify] = useState({ apiKey: '', secretKey: '', contractCode: '', environment: 'sandbox' });
+  const [pricing, setPricing] = useState({ amount: 5000, vatRate: 0.075, serviceCharge: 100, currency: 'NGN' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [mRes, pRes] = await Promise.all([
+          fetch(`${API_URL}/admin/config/monnify`, { headers: { Authorization: `Bearer ${token}` } }),
+          fetch(`${API_URL}/admin/config/chatPricing`, { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        if (mRes.ok) { const d = await mRes.json(); if (d.value?.apiKey) setMonnify(d.value); }
+        if (pRes.ok) { const d = await pRes.json(); if (d.value?.amount) setPricing(d.value); }
+      } catch { /* ignore */ } finally { setLoading(false); }
+    };
+    load();
+  }, [token]);
+
+  const save = async () => {
+    setSaving(true); setMsg('');
+    try {
+      await fetch(`${API_URL}/admin/config/monnify`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ value: monnify }),
+      });
+      await fetch(`${API_URL}/admin/config/chatPricing`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ value: pricing }),
+      });
+      setMsg('Payment config saved.');
+      setTimeout(() => setMsg(''), 3000);
+    } catch { setMsg('Could not save.'); } finally { setSaving(false); }
+  };
+
+  if (loading) return <div className="flex items-center gap-2 py-8"><Loader2 className="w-5 h-5 animate-spin text-primary" /> Loading config…</div>;
+
+  const inputCls = 'w-full px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all text-sm';
+
+  return (
+    <div className="space-y-8">
+      {/* Monnify API credentials */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <Key className="w-4 h-4 text-primary" />
+          <h3 className="font-display font-bold text-secondary">Monnify API Credentials</h3>
+        </div>
+        <p className="text-xs text-secondary/50 mb-4">
+          Get these from your Monnify dashboard at <span className="font-mono">dashboard.monnify.com</span>.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Environment</label>
+            <select value={monnify.environment} onChange={(e) => setMonnify((m) => ({ ...m, environment: e.target.value }))} className={inputCls}>
+              <option value="sandbox">Sandbox (Testing)</option>
+              <option value="production">Production (Live)</option>
+            </select>
+          </div>
+          <div />
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">API Key</label>
+            <input value={monnify.apiKey} onChange={(e) => setMonnify((m) => ({ ...m, apiKey: e.target.value }))} className={inputCls} placeholder="MK_TEST_..." />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Secret Key</label>
+            <input type="password" value={monnify.secretKey} onChange={(e) => setMonnify((m) => ({ ...m, secretKey: e.target.value }))} className={inputCls} placeholder="••••••••" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Contract Code</label>
+            <input value={monnify.contractCode} onChange={(e) => setMonnify((m) => ({ ...m, contractCode: e.target.value }))} className={inputCls} placeholder="MK_PROJ_..." />
+          </div>
+        </div>
+      </div>
+
+      {/* Chat pricing */}
+      <div>
+        <div className="flex items-center gap-2 mb-4">
+          <CreditCard className="w-4 h-4 text-primary" />
+          <h3 className="font-display font-bold text-secondary">Chat Access Pricing</h3>
+        </div>
+        <p className="text-xs text-secondary/50 mb-4">
+          Employers pay this amount (plus VAT and service charge) to unlock chat with each job seeker.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Base amount (NGN)</label>
+            <input type="number" value={pricing.amount} onChange={(e) => setPricing((p) => ({ ...p, amount: Number(e.target.value) }))} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">VAT rate</label>
+            <input type="number" step="0.001" value={pricing.vatRate} onChange={(e) => setPricing((p) => ({ ...p, vatRate: Number(e.target.value) }))} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Service charge (NGN)</label>
+            <input type="number" value={pricing.serviceCharge} onChange={(e) => setPricing((p) => ({ ...p, serviceCharge: Number(e.target.value) }))} className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Currency</label>
+            <input value={pricing.currency} onChange={(e) => setPricing((p) => ({ ...p, currency: e.target.value }))} className={inputCls} />
+          </div>
+        </div>
+        <div className="mt-3 p-3 rounded-xl bg-secondary/5 text-sm text-secondary/70">
+          Total per chat: <span className="font-bold text-secondary">₦{(pricing.amount + pricing.amount * pricing.vatRate + pricing.serviceCharge).toLocaleString()}</span>
+          {' '}(₦{pricing.amount.toLocaleString()} + {(pricing.vatRate * 100).toFixed(1)}% VAT + ₦{pricing.serviceCharge.toLocaleString()} service charge)
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          Save payment config
+        </button>
+        {msg && <span className="text-xs text-emerald-700 font-semibold">{msg}</span>}
+      </div>
+    </div>
+  );
+}
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -459,7 +590,7 @@ export default function AdminDashboard() {
                 <h2 className="font-display text-xl font-bold text-secondary">{activeMeta?.label}</h2>
                 {activeMeta?.desc && <p className="text-sm text-secondary/60 mt-0.5">{activeMeta.desc}</p>}
               </div>
-              {section !== 'reviews' && (
+              {section !== 'reviews' && section !== 'payments' && (
                 <div className="flex gap-2">
                   <button
                     onClick={() => setForm(current !== undefined ? clone(current) : {})}
@@ -487,7 +618,7 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {dirty && section !== 'reviews' && (
+            {dirty && section !== 'reviews' && section !== 'payments' && (
               <div className="mb-5 flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 Unsaved changes to this section.
@@ -511,7 +642,11 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {section === 'reviews' ? (
+            {section === 'payments' ? (
+              <EditorBoundary>
+                <PaymentsConfig token={token} />
+              </EditorBoundary>
+            ) : section === 'reviews' ? (
               <EditorBoundary>
                 <ReviewsManager
                   reviews={filteredReviews}
@@ -542,7 +677,7 @@ export default function AdminDashboard() {
             )}
 
             {/* Danger zone: reset everything */}
-            {section !== 'reviews' && (
+            {section !== 'reviews' && section !== 'payments' && (
               <div className="mt-10 pt-6 border-t border-secondary/10 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-secondary">Reset all content</div>

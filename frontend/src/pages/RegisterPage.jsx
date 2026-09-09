@@ -178,7 +178,7 @@ function AuthShell({ children }) {
   const branding = content.branding || {};
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-hero-gradient">
-      <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-8">
+      <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-5 sm:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center overflow-hidden">
             {branding.logo ? (

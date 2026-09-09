@@ -1,0 +1,15 @@
+{
+  "name": "talent-bridge-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Talent Bridge AI — connect employers, hubs and job seekers",
+  "scripts": {
+    "setup": "npm install --prefix backend && cp -n backend/.env.example backend/.env 2>/dev/null; npm install --prefix frontend && cp -n frontend/.env.example frontend/.env 2>/dev/null; echo 'Setup complete. Run: npm run dev'",
+    "dev": "npx concurrently --names api,web --prefix-colors yellow,cyan \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}

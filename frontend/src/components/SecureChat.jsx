@@ -395,7 +395,7 @@ async (partnerId, showBusy) => {
                   <div className="px-5 py-3 bg-white border-b border-secondary/10 flex items-center gap-3 shrink-0">
                     <button
                       onClick={() => setActive(null)}
-                      className="md:hidden w-8 h-8 rounded-lg bg-secondary/5 hover:bg-secondary/10 flex items-center justify-center mr-1"
+                      className="w-8 h-8 rounded-lg bg-secondary/5 hover:bg-secondary/10 flex items-center justify-center mr-1"
                       aria-label="Back to conversations"
                     >
                       <ChevronLeft className="w-4 h-4" />

@@ -15,6 +15,11 @@ import {
   BadgeCheck,
   ImagePlus,
   X,
+  Coins,
+  Plus,
+  Calendar,
+  ExternalLink,
+  Tag,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -139,6 +144,7 @@ export default function HubDashboard() {
   const { user, signOut } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
+  const [tab, setTab] = useState('grants'); // 'grants' | 'talent' | 'profile'
   const [link, setLink] = useState('');
   const [count, setCount] = useState(0);
   const [seekers, setSeekers] = useState([]);
@@ -146,6 +152,14 @@ export default function HubDashboard() {
   const [loadingSeekers, setLoadingSeekers] = useState(false);
   const [copied, setCopied] = useState(false);
   const [viewing, setViewing] = useState(null);
+  // Grant catalog state
+  const [grants, setGrants] = useState([]);
+  const [loadingGrants, setLoadingGrants] = useState(false);
+  const [showGrantForm, setShowGrantForm] = useState(false);
+  const [grantForm, setGrantForm] = useState({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' });
+  const [grantSaving, setGrantSaving] = useState(false);
+  const [grantMsg, setGrantMsg] = useState('');
+  const [editingGrant, setEditingGrant] = useState(null);
   // Organization profile state (shown on the landing partners section)
   const [orgName, setOrgName] = useState(user?.company || '');
   const [orgLogo, setOrgLogo] = useState(user?.logo || '');
@@ -193,8 +207,87 @@ export default function HubDashboard() {
   useEffect(() => {
     loadLink();
     loadSeekers();
+    loadGrants();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadGrants = async () => {
+    setLoadingGrants(true);
+    try {
+      const res = await fetch(`${API_URL}/hub/grants`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setGrants(d.grants);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingGrants(false);
+    }
+  };
+
+  const saveGrant = async () => {
+    if (!grantForm.title.trim()) return;
+    setGrantSaving(true);
+    setGrantMsg('');
+    try {
+      const body = {
+        ...grantForm,
+        tags: grantForm.tags ? grantForm.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+      };
+      const url = editingGrant ? `${API_URL}/hub/grants/${editingGrant._id}` : `${API_URL}/hub/grants`;
+      const res = await fetch(url, {
+        method: editingGrant ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setGrantMsg(editingGrant ? 'Grant updated.' : 'Grant created.');
+        setShowGrantForm(false);
+        setEditingGrant(null);
+        setGrantForm({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' });
+        loadGrants();
+        setTimeout(() => setGrantMsg(''), 3000);
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setGrantMsg(d.message || 'Could not save grant.');
+      }
+    } catch {
+      setGrantMsg('Could not connect to server.');
+    } finally {
+      setGrantSaving(false);
+    }
+  };
+
+  const deleteGrant = async (id) => {
+    if (!window.confirm('Delete this grant?')) return;
+    try {
+      const res = await fetch(`${API_URL}/hub/grants/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) loadGrants();
+    } catch {
+      // ignore
+    }
+  };
+
+  const startEditGrant = (g) => {
+    setEditingGrant(g);
+    setGrantForm({
+      title: g.title || '',
+      description: g.description || '',
+      amount: g.amount || '',
+      deadline: g.deadline || '',
+      eligibility: g.eligibility || '',
+      link: g.link || '',
+      tags: (g.tags || []).join(', '),
+      status: g.status || 'open',
+    });
+    setShowGrantForm(true);
+  };
 
   const copy = async () => {
     try {
@@ -301,208 +394,464 @@ export default function HubDashboard() {
           </p>
         </div>
 
-        {/* Registration link card */}
-        <div className="bg-secondary text-white rounded-3xl p-8 mb-6 relative overflow-hidden">
-          <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-primary/20 blur-3xl pointer-events-none" />
-
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <LinkIcon className="w-5 h-5 text-secondary" />
-            </div>
-            <div>
-              <h2 className="font-display font-bold">Your unique registration link</h2>
-              <p className="text-white/60 text-sm">
-                Anyone who registers through this link joins your talent pool.
-              </p>
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="flex items-center gap-2 text-white/60 py-4">
-              <Loader2 className="w-5 h-5 animate-spin" /> Generating your link…
-            </div>
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1 bg-white/10 border border-white/15 rounded-xl px-4 py-3 font-mono text-sm text-primary break-all">
-                {link || 'Generating…'}
-              </div>
-              <button
-                onClick={copy}
-                className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 transition-colors"
-              >
-                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                {copied ? 'Copied!' : 'Copy link'}
-              </button>
-            </div>
-          )}
-
-          <div className="mt-5 flex items-center gap-2 text-sm text-white/70">
-            <Users className="w-4 h-4 text-primary" />
-            <span className="font-bold text-white">{count}</span> member
-            {count === 1 ? '' : 's'} registered through your link
-          </div>
+        {/* Tabs */}
+        <div className="flex gap-2 mb-6 bg-secondary/5 p-1 rounded-xl w-fit">
+          <button
+            onClick={() => setTab('grants')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'grants'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <Coins className="w-4 h-4" /> Grant Catalog
+          </button>
+          <button
+            onClick={() => setTab('talent')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'talent'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <Users className="w-4 h-4" /> Talent Pool
+          </button>
+          <button
+            onClick={() => setTab('profile')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'profile'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <Building2 className="w-4 h-4" /> Profile
+          </button>
         </div>
 
-        {/* Organization profile card — feeds the landing partners section */}
-        <div className="bg-white rounded-2xl border border-secondary/10 p-6 mb-6">
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-              <Building2 className="w-5 h-5 text-secondary" />
-            </div>
-            <div>
-              <h2 className="font-display font-bold text-secondary">Organization profile</h2>
-              <p className="text-xs text-secondary/50">
-                Your registered organization is shown automatically in the partners section of the
-                landing page. Customize how it appears.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1.5">
-                Organization name
-              </label>
-              <input
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                placeholder={user?.name || 'Organization name'}
-                className="w-full px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
-              />
-              <p className="text-xs text-secondary/50 mt-1">
-                Leave blank to use your account name as the partner name.
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-secondary mb-1.5">
-                Logo image
-              </label>
+        {/* ── Grant Catalog Tab ─────────────────────────────────────────── */}
+        {tab === 'grants' && (
+          <div>
+            <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-2">
-                <input
-                  value={orgLogo}
-                  onChange={(e) => setOrgLogo(e.target.value)}
-                  placeholder="https://…/logo.png or upload below"
-                  className="flex-1 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
-                />
-                {orgLogo && (
-                  <div className="relative shrink-0">
-                    <img
-                      src={orgLogo}
-                      alt="logo preview"
-                      className="w-11 h-11 rounded-full bg-white ring-1 ring-secondary/10 object-contain"
+                <h2 className="font-display text-lg font-bold text-secondary">Grant Catalog</h2>
+                <span className="text-sm text-secondary/50">({grants.length})</span>
+              </div>
+              <button
+                onClick={() => { setEditingGrant(null); setGrantForm({ title: '', description: '', amount: '', deadline: '', eligibility: '', link: '', tags: '', status: 'open' }); setShowGrantForm(!showGrantForm); }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 transition-colors"
+              >
+                {showGrantForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                {showGrantForm ? 'Cancel' : 'New grant'}
+              </button>
+            </div>
+
+            {grantMsg && (
+              <div className={`mb-4 text-sm font-semibold ${grantMsg.includes('saved') || grantMsg.includes('created') || grantMsg.includes('updated') ? 'text-emerald-700' : 'text-amber-700'}`}>
+                {grantMsg}
+              </div>
+            )}
+
+            {/* Create / Edit grant form */}
+            {showGrantForm && (
+              <div className="bg-white rounded-2xl border border-secondary/10 p-6 mb-6">
+                <h3 className="font-display font-bold text-secondary mb-4">
+                  {editingGrant ? 'Edit grant' : 'Add a new grant'}
+                </h3>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Title *</label>
+                    <input
+                      value={grantForm.title}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, title: e.target.value }))}
+                      placeholder="e.g. Tech Skills Innovation Fund"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Description</label>
+                    <textarea
+                      rows={3}
+                      value={grantForm.description}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, description: e.target.value }))}
+                      placeholder="Describe what this grant covers, goals, and impact..."
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Amount</label>
+                    <input
+                      value={grantForm.amount}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, amount: e.target.value }))}
+                      placeholder="e.g. $5,000"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Deadline</label>
+                    <input
+                      value={grantForm.deadline}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, deadline: e.target.value }))}
+                      placeholder="e.g. Dec 31, 2026"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Eligibility</label>
+                    <input
+                      value={grantForm.eligibility}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, eligibility: e.target.value }))}
+                      placeholder="e.g. Members with 3+ endorsements"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Application link</label>
+                    <input
+                      value={grantForm.link}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, link: e.target.value }))}
+                      placeholder="https://..."
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Tags (comma-separated)</label>
+                    <input
+                      value={grantForm.tags}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, tags: e.target.value }))}
+                      placeholder="e.g. tech, training, equipment"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Status</label>
+                    <select
+                      value={grantForm.status}
+                      onChange={(e) => setGrantForm((f) => ({ ...f, status: e.target.value }))}
+                      className={inputCls}
+                    >
+                      <option value="open">Open</option>
+                      <option value="upcoming">Upcoming</option>
+                      <option value="closed">Closed</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={saveGrant}
+                    disabled={grantSaving || !grantForm.title.trim()}
+                    className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                  >
+                    {grantSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                    {editingGrant ? 'Update grant' : 'Create grant'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Grant cards */}
+            {loadingGrants ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : grants.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
+                <Coins className="w-8 h-8 text-primary mx-auto mb-3" />
+                <p className="font-display font-bold text-secondary">No grants yet</p>
+                <p className="text-sm text-secondary/60 mt-1">
+                  Create your first grant to offer funding opportunities to your talent pool.
+                </p>
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {grants.map((g) => (
+                  <div key={g._id} className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <h3 className="font-display font-bold text-secondary leading-snug">{g.title}</h3>
+                      <span
+                        className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                          g.status === 'open'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : g.status === 'upcoming'
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-secondary/10 text-secondary/50'
+                        }`}
+                      >
+                        {g.status}
+                      </span>
+                    </div>
+                    {g.description && (
+                      <p className="text-xs text-secondary/60 mb-3 line-clamp-2">{g.description}</p>
+                    )}
+                    <div className="space-y-1.5 mb-3">
+                      {g.amount && (
+                        <div className="flex items-center gap-1.5 text-sm text-secondary">
+                          <Coins className="w-3.5 h-3.5 text-primary" /> {g.amount}
+                        </div>
+                      )}
+                      {g.deadline && (
+                        <div className="flex items-center gap-1.5 text-xs text-secondary/60">
+                          <Calendar className="w-3.5 h-3.5" /> Deadline: {g.deadline}
+                        </div>
+                      )}
+                      {g.eligibility && (
+                        <div className="flex items-center gap-1.5 text-xs text-secondary/60">
+                          <BadgeCheck className="w-3.5 h-3.5" /> {g.eligibility}
+                        </div>
+                      )}
+                    </div>
+                    {(g.tags || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {g.tags.map((tag) => (
+                          <span key={tag} className="inline-flex items-center gap-1 text-[10px] font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full">
+                            <Tag className="w-2.5 h-2.5" /> {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-auto flex items-center gap-2 pt-3 border-t border-secondary/5">
+                      {g.link && (
+                        <a
+                          href={g.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline"
+                        >
+                          <ExternalLink className="w-3 h-3" /> Apply
+                        </a>
+                      )}
+                      <div className="ml-auto flex items-center gap-1">
+                        <button
+                          onClick={() => startEditGrant(g)}
+                          className="text-xs text-secondary/50 hover:text-secondary px-2 py-1 rounded-lg hover:bg-secondary/5 transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteGrant(g._id)}
+                          className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Talent Pool Tab ───────────────────────────────────────────── */}
+        {tab === 'talent' && (
+          <div>
+            {/* Registration link card */}
+            <div className="bg-secondary text-white rounded-3xl p-8 mb-6 relative overflow-hidden">
+              <div className="absolute -top-16 -right-16 w-64 h-64 rounded-full bg-primary/20 blur-3xl pointer-events-none" />
+
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <LinkIcon className="w-5 h-5 text-secondary" />
+                </div>
+                <div>
+                  <h2 className="font-display font-bold">Your unique registration link</h2>
+                  <p className="text-white/60 text-sm">
+                    Anyone who registers through this link joins your talent pool.
+                  </p>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="flex items-center gap-2 text-white/60 py-4">
+                  <Loader2 className="w-5 h-5 animate-spin" /> Generating your link…
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1 bg-white/10 border border-white/15 rounded-xl px-4 py-3 font-mono text-sm text-primary break-all">
+                    {link || 'Generating…'}
+                  </div>
+                  <button
+                    onClick={copy}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 transition-colors"
+                  >
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? 'Copied!' : 'Copy link'}
+                  </button>
+                </div>
+              )}
+
+              <div className="mt-5 flex items-center gap-2 text-sm text-white/70">
+                <Users className="w-4 h-4 text-primary" />
+                <span className="font-bold text-white">{count}</span> member
+                {count === 1 ? '' : 's'} registered through your link
+              </div>
+            </div>
+
+            {/* Seekers list */}
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="font-display text-lg font-bold text-secondary">
+                Talent pool members
+              </h2>
+              <span className="text-sm text-secondary/50">({seekers.length})</span>
+            </div>
+
+            {loadingSeekers ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : seekers.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
+                <Sparkles className="w-8 h-8 text-primary mx-auto mb-3" />
+                <p className="font-display font-bold text-secondary">No members yet</p>
+                <p className="text-sm text-secondary/60 mt-1">
+                  Share your link to start building your talent pool.
+                </p>
+              </div>
+            ) : (
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {seekers.map((s) => (
+                  <div key={s.id} className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
+                        <span className="font-display font-bold text-secondary">{initials(s.name)}</span>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold text-secondary truncate">{s.name}</div>
+                        <div className="text-xs text-secondary/50 truncate">{s.email}</div>
+                      </div>
+                    </div>
+                    {s.title && <div className="text-sm text-secondary/70 mb-2">{s.title}</div>}
+                    {(s.hubRating > 0 || s.hubRecommend) && (
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        {s.hubRating > 0 && <StarRow rating={s.hubRating} />}
+                        {s.hubRecommend && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-secondary bg-primary/15 px-2 py-0.5 rounded-full">
+                            <BadgeCheck className="w-3.5 h-3.5" /> Recommended
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {(s.skills || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        {s.skills.slice(0, 4).map((skill) => (
+                          <span
+                            key={skill}
+                            className="text-xs font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setViewing(s)}
+                      className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-white text-sm font-semibold hover:bg-accent transition-colors"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> View profile
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Profile Tab ───────────────────────────────────────────────── */}
+        {tab === 'profile' && (
+          <div>
+            <div className="bg-white rounded-2xl border border-secondary/10 p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <Building2 className="w-5 h-5 text-secondary" />
+                </div>
+                <div>
+                  <h2 className="font-display font-bold text-secondary">Organization profile</h2>
+                  <p className="text-xs text-secondary/50">
+                    Your registered organization is shown automatically in the partners section of the
+                    landing page. Customize how it appears.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-secondary mb-1.5">
+                    Organization name
+                  </label>
+                  <input
+                    value={orgName}
+                    onChange={(e) => setOrgName(e.target.value)}
+                    placeholder={user?.name || 'Organization name'}
+                    className="w-full px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+                  />
+                  <p className="text-xs text-secondary/50 mt-1">
+                    Leave blank to use your account name as the partner name.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-secondary mb-1.5">
+                    Logo image
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={orgLogo}
+                      onChange={(e) => setOrgLogo(e.target.value)}
+                      placeholder="https://…/logo.png or upload below"
+                      className="flex-1 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all"
+                    />
+                    {orgLogo && (
+                      <div className="relative shrink-0">
+                        <img
+                          src={orgLogo}
+                          alt="logo preview"
+                          className="w-11 h-11 rounded-full bg-white ring-1 ring-secondary/10 object-contain"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setOrgLogo('')}
+                          className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                          aria-label="Remove logo"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      ref={logoRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={onLogoFile}
                     />
                     <button
                       type="button"
-                      onClick={() => setOrgLogo('')}
-                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
-                      aria-label="Remove logo"
+                      onClick={() => logoRef.current?.click()}
+                      disabled={orgReading}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/5 hover:bg-secondary/10 text-xs font-semibold text-secondary transition-colors disabled:opacity-60"
                     >
-                      <X className="w-3 h-3" />
+                      {orgReading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
+                      Upload logo
                     </button>
-                  </div>
-                )}
-              </div>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  ref={logoRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onLogoFile}
-                />
-                <button
-                  type="button"
-                  onClick={() => logoRef.current?.click()}
-                  disabled={orgReading}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/5 hover:bg-secondary/10 text-xs font-semibold text-secondary transition-colors disabled:opacity-60"
-                >
-                  {orgReading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
-                  Upload logo
-                </button>
-                <span className="text-[11px] text-secondary/40">
-                  JPG or PNG under 1 MB — leave blank for an auto-generated logo.
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center gap-3">
-            <button
-              onClick={saveOrg}
-              disabled={orgSaving}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-secondary text-white text-sm font-semibold hover:bg-accent disabled:opacity-60 transition-colors"
-            >
-              {orgSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Save partner info
-            </button>
-            {orgMsg && <span className="text-xs text-emerald-700">{orgMsg}</span>}
-          </div>
-        </div>
-
-        {/* Seekers list */}
-        <div className="flex items-center gap-2 mb-4">
-          <h2 className="font-display text-lg font-bold text-secondary">
-            Talent pool members
-          </h2>
-          <span className="text-sm text-secondary/50">({seekers.length})</span>
-        </div>
-
-        {loadingSeekers ? (
-          <div className="flex items-center justify-center py-16">
-            <Loader2 className="w-6 h-6 animate-spin text-primary" />
-          </div>
-        ) : seekers.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
-            <Sparkles className="w-8 h-8 text-primary mx-auto mb-3" />
-            <p className="font-display font-bold text-secondary">No members yet</p>
-            <p className="text-sm text-secondary/60 mt-1">
-              Share your link to start building your talent pool.
-            </p>
-          </div>
-        ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {seekers.map((s) => (
-              <div key={s.id} className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
-                    <span className="font-display font-bold text-secondary">{initials(s.name)}</span>
-                  </div>
-                  <div className="min-w-0">
-                    <div className="font-semibold text-secondary truncate">{s.name}</div>
-                    <div className="text-xs text-secondary/50 truncate">{s.email}</div>
+                    <span className="text-[11px] text-secondary/40">
+                      JPG or PNG under 1 MB — leave blank for an auto-generated logo.
+                    </span>
                   </div>
                 </div>
-                {s.title && <div className="text-sm text-secondary/70 mb-2">{s.title}</div>}
-                {(s.hubRating > 0 || s.hubRecommend) && (
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    {s.hubRating > 0 && <StarRow rating={s.hubRating} />}
-                    {s.hubRecommend && (
-                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-secondary bg-primary/15 px-2 py-0.5 rounded-full">
-                        <BadgeCheck className="w-3.5 h-3.5" /> Recommended
-                      </span>
-                    )}
-                  </div>
-                )}
-                {(s.skills || []).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-3">
-                    {s.skills.slice(0, 4).map((skill) => (
-                      <span
-                        key={skill}
-                        className="text-xs font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full"
-                      >
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <button
-                  onClick={() => setViewing(s)}
-                  className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-white text-sm font-semibold hover:bg-accent transition-colors"
-                >
-                  <Eye className="w-3.5 h-3.5" /> View profile
-                </button>
               </div>
-            ))}
+
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  onClick={saveOrg}
+                  disabled={orgSaving}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-secondary text-white text-sm font-semibold hover:bg-accent disabled:opacity-60 transition-colors"
+                >
+                  {orgSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Save partner info
+                </button>
+                {orgMsg && <span className="text-xs text-emerald-700">{orgMsg}</span>}
+              </div>
+            </div>
           </div>
         )}
       </main>
