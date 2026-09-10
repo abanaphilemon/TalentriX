@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — System Architecture</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: #fff; color: #000; padding: 40px; }
+
+    .page-title { text-align: center; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; }
+    .page-subtitle { text-align: center; font-size: 13px; color: #888; font-weight: 500; margin: 6px 0 40px; }
+
+    /* ── Layout ── */
+    .arch { max-width: 1100px; margin: 0 auto; }
+    .layer {
+      border: 2px solid #000; border-radius: 14px;
+      padding: 24px; position: relative; margin-bottom: 0;
+    }
+    .layer-label {
+      position: absolute; top: -11px; left: 20px;
+      background: #fff; padding: 0 10px;
+      font-size: 11px; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.12em; color: #000;
+    }
+    .layer-sublabel {
+      font-size: 10px; color: #999; font-weight: 500; margin-top: 4px;
+    }
+
+    /* ── Connector ── */
+    .connector {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 8px 0;
+    }
+    .conn-line { width: 2px; height: 20px; background: #000; }
+    .conn-head {
+      width: 0; height: 0;
+      border-left: 6px solid transparent; border-right: 6px solid transparent;
+      border-top: 8px solid #000;
+    }
+    .conn-label {
+      font-size: 10px; color: #999; font-weight: 600;
+      margin-top: 4px; font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Box ── */
+    .box {
+      border: 2px solid #000; border-radius: 10px;
+      padding: 14px 18px; background: #fff;
+    }
+    .box-title { font-size: 13px; font-weight: 800; margin-bottom: 4px; }
+    .box-desc { font-size: 11px; color: #666; line-height: 1.5; }
+    .box-mono { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #555; }
+    .box-filled { background: #000; color: #fff; border-color: #000; }
+    .box-filled .box-desc { color: #aaa; }
+    .box-filled .box-mono { color: #888; }
+
+    /* ── Grid ── */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; }
+
+    /* ── Sub-section ── */
+    .sub-section {
+      border: 1.5px dashed #ccc; border-radius: 10px;
+      padding: 16px; position: relative;
+    }
+    .sub-label {
+      position: absolute; top: -9px; left: 14px;
+      background: #fff; padding: 0 6px;
+      font-size: 9px; font-weight: 700; color: #999;
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+
+    /* ── Service list ── */
+    .svc-list { display: flex; flex-direction: column; gap: 6px; }
+    .svc-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; border: 1.5px solid #e0e0e0; border-radius: 8px;
+      font-size: 12px; font-weight: 600;
+    }
+    .svc-icon {
+      width: 28px; height: 28px; border-radius: 7px;
+      background: #f0f0f0; display: flex; align-items: center;
+      justify-content: center; font-size: 14px; flex-shrink: 0;
+    }
+    .svc-name { font-weight: 700; }
+    .svc-desc { font-size: 10px; color: #888; font-weight: 500; }
+
+    /* ── DB schema ── */
+    .schema-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .schema-item {
+      border: 1.5px solid #ddd; border-radius: 8px; padding: 10px;
+      font-size: 11px;
+    }
+    .schema-item .name { font-weight: 800; font-size: 11px; margin-bottom: 3px; }
+    .schema-item .fields { font-size: 9px; color: #888; font-family: 'JetBrains Mono', monospace; line-height: 1.6; }
+
+    /* ── Route table ── */
+    .route-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .route-table th {
+      text-align: left; font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em; color: #999;
+      padding: 6px 10px; border-bottom: 2px solid #000;
+    }
+    .route-table td {
+      padding: 6px 10px; border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    .route-method {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      font-size: 9px; font-weight: 800; font-family: 'JetBrains Mono', monospace;
+      background: #000; color: #fff; min-width: 36px; text-align: center;
+    }
+    .route-path { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+    .route-auth { font-size: 9px; color: #999; }
+
+    /* ── Data flow arrows ── */
+    .flow-row {
+      display: flex; align-items: center; gap: 12px;
+      margin: 12px 0;
+    }
+    .flow-box {
+      padding: 6px 14px; border: 1.5px solid #000; border-radius: 6px;
+      font-size: 11px; font-weight: 700; white-space: nowrap;
+    }
+    .flow-arrow {
+      font-size: 16px; color: #000; font-weight: 400;
+    }
+    .flow-label {
+      font-size: 9px; color: #999; font-weight: 600;
+    }
+
+    /* ── Legend ── */
+    .legend {
+      display: flex; gap: 20px; justify-content: center;
+      margin-top: 32px; padding-top: 16px; border-top: 1px solid #eee;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #888; }
+    .legend-box { width: 16px; height: 12px; border: 2px solid #000; border-radius: 3px; }
+    .legend-box.filled { background: #000; }
+    .legend-box.dashed { border-style: dashed; border-color: #aaa; }
+  </style>
+</head>
+<body>
+
+  <div class="page-title">TalentriX — System Architecture</div>
+  <div class="page-subtitle">Full-stack technical architecture and data flow</div>
+
+  <div class="arch">
+
+    <!-- ══════ CLIENT ══════ -->
+    <div class="layer">
+      <div class="layer-label">Client — Browser (React SPA)</div>
+      <div class="layer-sublabel">Vite dev server · Port 5173 · Proxies /api → localhost:5000</div>
+
+      <div style="margin-top:16px;">
+        <div class="grid-3">
+          <!-- UI Layer -->
+          <div class="sub-section">
+            <div class="sub-label">UI Layer</div>
+            <div class="svc-list" style="margin-top:6px;">
+              <div class="svc-item"><div class="svc-icon">⚛</div><div><div class="svc-name">React 18</div><div class="svc-desc">SPA, React Router v7</div></div></div>
+              <div class="svc-item"><div class="svc-icon">🎨</div><div><div class="svc-name">Tailwind CSS</div><div class="svc-desc">Utility-first styling</div></div></div>
+              <div class="svc-item"><div class="svc-icon">✨</div><div><div class="svc-name">Framer Motion</div><div class="svc-desc">Scroll + modal animations</div></div></div>
+              <div class="svc-item"><div class="svc-icon">🧊</div><div><div class="svc-name">Three.js / R3F</div><div class="svc-desc">3D hero scene</div></div></div>
+            </div>
+          </div>
+
+          <!-- State / Context -->
+          <div class="sub-section">
+            <div class="sub-label">State Management</div>
+            <div class="svc-list" style="margin-top:6px;">
+              <div class="svc-item"><div class="svc-icon">🔐</div><div><div class="svc-name">AuthContext</div><div class="svc-desc">JWT, roles, Google OAuth, admin session</div></div></div>
+              <div class="svc-item"><div class="svc-icon">📄</div><div><div class="svc-name">ContentContext</div><div class="svc-desc">CMS content fetch + deep merge + refresh</div></div></div>
+              <div class="svc-item"><div class="svc-icon">💾</div><div><div class="svc-name">localStorage</div><div class="svc-desc">tbai.token · tbai.role · tbai.adminToken · E2E keys</div></div></div>
+            </div>
+          </div>
+
+          <!-- Crypto -->
+          <div class="sub-section">
+            <div class="sub-label">E2E Encryption</div>
+            <div class="svc-list" style="margin-top:6px;">
+              <div class="svc-item"><div class="svc-icon">🔑</div><div><div class="svc-name">Web Crypto API</div><div class="svc-desc">ECDH P-256 key exchange</div></div></div>
+              <div class="svc-item"><div class="svc-icon">🔒</div><div><div class="svc-name">AES-256-GCM</div><div class="svc-desc">Message encrypt / decrypt</div></div></div>
+              <div class="svc-item"><div class="svc-icon">📦</div><div><div class="svc-name">Key Cache</div><div class="svc-desc">Indexed by partner ID</div></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ CONNECTOR ══════ -->
+    <div class="connector">
+      <div class="conn-line"></div>
+      <div class="conn-head"></div>
+      <div class="conn-label">HTTP / REST · JSON · Authorization: Bearer &lt;jwt&gt;</div>
+    </div>
+
+    <!-- ══════ SERVER ══════ -->
+    <div class="layer">
+      <div class="layer-label">Server — Express.js</div>
+      <div class="layer-sublabel">Node.js · Port 5000 · Single-file server (server.js — 1812 lines)</div>
+
+      <div style="margin-top:16px;">
+        <div class="grid-2">
+          <!-- Auth + Middleware -->
+          <div>
+            <div class="sub-section" style="margin-bottom:14px;">
+              <div class="sub-label">Authentication Middleware</div>
+              <div class="svc-list" style="margin-top:6px;">
+                <div class="svc-item"><div class="svc-icon">🛡</div><div><div class="svc-name">verifyToken</div><div class="svc-desc">JWT verify · req.user = { id, email, role }</div></div></div>
+                <div class="svc-item"><div class="svc-icon">👑</div><div><div class="svc-name">requireAdmin</div><div class="svc-desc">Checks tbai.adminToken · role === 'admin'</div></div></div>
+              </div>
+            </div>
+
+            <div class="sub-section">
+              <div class="sub-label">Password Hashing</div>
+              <div class="svc-list" style="margin-top:6px;">
+                <div class="svc-item"><div class="svc-icon">🔒</div><div><div class="svc-name">bcryptjs</div><div class="svc-desc">saltRounds = 10 · register + login</div></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- API Routes -->
+          <div class="sub-section" style="max-height:340px;overflow:hidden;">
+            <div class="sub-label">API Route Groups</div>
+            <table class="route-table" style="margin-top:6px;">
+              <thead><tr><th>Method</th><th>Path</th><th>Auth</th></tr></thead>
+              <tbody>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/register</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/login</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/admin/login</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/content</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/reviews</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/reviews</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/public/profile/:id</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/profile</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">PUT</span></td><td class="route-path">/api/profile</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/jobs</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/seekers</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/grants/external</td><td class="route-auth">Public</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/hub/link</td><td class="route-auth">Hub</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/hub/seekers</td><td class="route-auth">Hub</td></tr>
+                <tr><td><span class="route-method">PUT</span></td><td class="route-path">/api/hub/rate/:id</td><td class="route-auth">Hub</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/chat/threads</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/chat/thread/:id</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/chat/messages</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/chat/unread</td><td class="route-auth">JWT ✓</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/payment/init</td><td class="route-auth">Employer</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/payment/verify/:ref</td><td class="route-auth">Employer</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/payment/my-payments</td><td class="route-auth">Employer</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/payment/price</td><td class="route-auth">Employer</td></tr>
+                <tr><td><span class="route-method">PUT</span></td><td class="route-path">/api/content</td><td class="route-auth">Admin</td></tr>
+                <tr><td><span class="route-method">POST</span></td><td class="route-path">/api/content/reset</td><td class="route-auth">Admin</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/admin/reviews</td><td class="route-auth">Admin</td></tr>
+                <tr><td><span class="route-method">PUT</span></td><td class="route-path">/api/admin/reviews/:id</td><td class="route-auth">Admin</td></tr>
+                <tr><td><span class="route-method">GET</span></td><td class="route-path">/api/admin/config/:key</td><td class="route-auth">Admin</td></tr>
+                <tr><td><span class="route-method">PUT</span></td><td class="route-path">/api/admin/config/:key</td><td class="route-auth">Admin</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ CONNECTOR ══════ -->
+    <div class="connector">
+      <div class="conn-line"></div>
+      <div class="conn-head"></div>
+      <div class="conn-label">Mongoose ODM · MongoDB wire protocol</div>
+    </div>
+
+    <!-- ══════ DATABASE ══════ -->
+    <div class="layer">
+      <div class="layer-label">Database — MongoDB</div>
+      <div class="layer-sublabel">mongodb://localhost:27017/talentbridge</div>
+
+      <div style="margin-top:16px;">
+        <div class="schema-grid">
+          <div class="schema-item">
+            <div class="name">User</div>
+            <div class="fields">email · password (bcrypt)<br/>role · name · avatar<br/>company · logo</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">Profile</div>
+            <div class="fields">userId (ref: User)<br/>title · location · bio<br/>skills[] · languages[]<br/>experience[] · education[]<br/>certifications[] · projects[]<br/>cv · resumeLink · phone<br/>linkedin · github · website<br/>availability · pronouns</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">SiteContent</div>
+            <div class="fields">key: 'landing'<br/>branding · hero · heroStats<br/>navLinks · about · features<br/>cta · reviewsHeading<br/>partnersHeading<br/>collaborators[] · footer<br/>contactInfo · contactHeading</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">Review</div>
+            <div class="fields">name · role · rating<br/>message · status<br/>(pending | approved | rejected)<br/>createdAt</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">Job</div>
+            <div class="fields">title · company · location<br/>description · type · salary<br/>skills[] · url · source</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">ChatThread</div>
+            <div class="fields">participants[]<br/>lastMessage · updatedAt</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">ChatMessage</div>
+            <div class="fields">threadId (ref)<br/>from · to · iv · ct<br/>(AES-GCM ciphertext)<br/>createdAt</div>
+          </div>
+          <div class="schema-item">
+            <div class="name">Payment</div>
+            <div class="fields">employerId · seekerId<br/>amount · currency<br/>paymentRef · status<br/>paidAt</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ CONNECTOR ══════ -->
+    <div class="connector">
+      <div class="conn-line"></div>
+      <div class="conn-head"></div>
+      <div class="conn-label">HTTP / OAuth 2.0 / API keys</div>
+    </div>
+
+    <!-- ══════ EXTERNAL SERVICES ══════ -->
+    <div class="layer" style="border-color:#888;">
+      <div class="layer-label" style="color:#888;">External Services</div>
+
+      <div style="margin-top:16px;">
+        <div class="grid-4">
+          <div class="box">
+            <div class="box-title">Google OAuth</div>
+            <div class="box-desc">Identity Services<br/>JWT decode · profile</div>
+            <div class="box-mono" style="margin-top:6px;">VITE_GOOGLE_CLIENT_ID</div>
+          </div>
+          <div class="box">
+            <div class="box-title">Monnify</div>
+            <div class="box-desc">Payment gateway<br/>Checkout · Verify · Webhook</div>
+            <div class="box-mono" style="margin-top:6px;">API keys · Contract code</div>
+          </div>
+          <div class="box">
+            <div class="box-title">Remote Jobs API</div>
+            <div class="box-desc">External job feeds<br/>Remotive · Arbeitnow · RemoteOK</div>
+            <div class="box-mono" style="margin-top:6px;">GET /api/jobs</div>
+          </div>
+          <div class="box">
+            <div class="box-title">Grants API</div>
+            <div class="box-desc">External grant feeds<br/>Grants.gov · EU Funding</div>
+            <div class="box-mono" style="margin-top:6px;">GET /api/grants/external</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ DATA FLOW ══════ -->
+    <div style="margin-top:32px;">
+      <div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.12em;color:#999;text-align:center;margin-bottom:16px;">Key Data Flows</div>
+
+      <div class="grid-2" style="gap:16px;">
+        <!-- Auth flow -->
+        <div class="sub-section">
+          <div class="sub-label">Authentication Flow</div>
+          <div style="padding-top:8px;">
+            <div class="flow-row">
+              <div class="flow-box">Browser</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">POST /api/login</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">bcrypt compare</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">jwt.sign()</div>
+            </div>
+            <div class="flow-row" style="margin-top:4px;">
+              <div class="flow-label" style="margin-left:8px;">Response: { token, user } → localStorage.setItem('tbai.token')</div>
+            </div>
+            <div class="flow-row" style="margin-top:8px;">
+              <div class="flow-box">Subsequent requests</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">Authorization: Bearer &lt;jwt&gt;</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">verifyToken middleware</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat flow -->
+        <div class="sub-section">
+          <div class="sub-label">Encrypted Chat Flow</div>
+          <div style="padding-top:8px;">
+            <div class="flow-row">
+              <div class="flow-box">Browser A</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">ECDH key exchange</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">AES-GCM encrypt</div>
+            </div>
+            <div class="flow-row" style="margin-top:4px;">
+              <div class="flow-box" style="margin-left:0;">POST /api/chat/messages { iv, ct }</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">MongoDB (ciphertext)</div>
+            </div>
+            <div class="flow-row" style="margin-top:8px;">
+              <div class="flow-box">Browser B</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">GET /api/chat/thread/:id</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">AES-GCM decrypt</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CMS flow -->
+        <div class="sub-section">
+          <div class="sub-label">CMS Content Flow</div>
+          <div style="padding-top:8px;">
+            <div class="flow-row">
+              <div class="flow-box">Admin Dashboard</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">PUT /api/content</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">MongoDB update</div>
+            </div>
+            <div class="flow-row" style="margin-top:8px;">
+              <div class="flow-box">Landing Page</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">GET /api/content</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">ContentContext → all components</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment flow -->
+        <div class="sub-section">
+          <div class="sub-label">Payment Gate Flow</div>
+          <div style="padding-top:8px;">
+            <div class="flow-row">
+              <div class="flow-box">Employer</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">POST /api/payment/init</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">Monnify checkout</div>
+            </div>
+            <div class="flow-row" style="margin-top:4px;">
+              <div class="flow-label" style="margin-left:8px;">Redirect → payment → callback with paymentRef</div>
+            </div>
+            <div class="flow-row" style="margin-top:8px;">
+              <div class="flow-box">GET /api/payment/verify/:ref</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">Monnify verify</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box">Unlock chat access</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-box"></div> Service / layer</div>
+    <div class="legend-item"><div class="legend-box filled"></div> Data store</div>
+    <div class="legend-item"><div class="legend-box dashed"></div> Internal component</div>
+    <div class="legend-item">→ = data flow</div>
+  </div>
+
+</body>
+</html>
