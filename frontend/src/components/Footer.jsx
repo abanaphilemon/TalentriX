@@ -35,7 +35,7 @@ export default function Footer() {
             <div className="flex items-center gap-2 mb-4">
               <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30 overflow-hidden">
                 {branding.logo ? (
-                  <img src={branding.logo} alt={`${branding.name || 'Talent Bridge'} logo`} className="w-full h-full object-contain p-1" />
+                  <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-1" />
                 ) : (
                   <span className="text-secondary font-display font-bold text-lg leading-none">
                     TB
@@ -43,7 +43,7 @@ export default function Footer() {
                 )}
               </div>
               <span className="font-display font-bold text-lg text-tertiary">
-                {branding.name || 'Talent Bridge'}
+{branding.name || 'TalentriX'}
               </span>
             </div>
             <p className="text-sm text-white/60 leading-relaxed">
@@ -120,7 +120,7 @@ export default function Footer() {
         {/* Divider */}
         <div className="border-t border-white/10 pt-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-white/50">
-            © {new Date().getFullYear()} {branding.name || 'Talent Bridge AI'}. All rights reserved.
+            © {new Date().getFullYear()} {branding.name || 'TalentriX'}. All rights reserved.
           </p>
           <div className="flex gap-6 text-xs text-white/50">
             <a href="#" className="hover:text-primary transition-colors">

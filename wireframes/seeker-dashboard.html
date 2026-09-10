@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — Seeker Dashboard Wireframe</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .dash-header {
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 32px;background:var(--surface);border-bottom:2px solid #e0e0e0;
+      position:sticky;top:0;z-index:20;
+    }
+    .dash-header .brand { display:flex;align-items:center;gap:8px; }
+    .dash-header .brand-icon { width:32px;height:32px;border-radius:8px;background:var(--text); }
+    .dash-header .brand-name { font-weight:800;font-size:14px; }
+    .dash-header .right { display:flex;align-items:center;gap:12px; }
+    .dash-header .pill {
+      padding:7px 14px;border-radius:8px;background:#f0f0f0;
+      font-size:12px;font-weight:700;color:var(--text);display:inline-flex;align-items:center;gap:5px;
+    }
+    .badge-count {
+      min-width:18px;height:18px;border-radius:10px;background:var(--text);color:#fff;
+      font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;
+    }
+    .dash-main { max-width:1100px;margin:0 auto;padding:32px; }
+    .dash-title { font-size:24px;font-weight:800;margin-bottom:4px; }
+    .dash-sub { font-size:13px;color:var(--muted);margin-bottom:24px; }
+    .job-card {
+      background:var(--surface);border:2px solid #e0e0e0;border-radius:14px;padding:20px;cursor:pointer;
+    }
+    .job-card:hover { border-color:#bbb; }
+    .job-card .company-icon {
+      width:40px;height:40px;border-radius:10px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;
+    }
+    .job-card h4 { font-size:14px;font-weight:700;line-height:1.3; }
+    .job-card .meta { font-size:11px;color:var(--muted);margin-top:2px; }
+    .job-card .match {
+      display:inline-block;padding:3px 10px;border-radius:10px;font-size:10px;font-weight:800;
+    }
+    .match-high { background:#e0fce0;color:#1a7a1a; }
+    .match-med  { background:#fff3e0;color:#a06000; }
+    .job-skill {
+      display:inline-block;padding:3px 10px;border-radius:12px;background:#f0f0f0;
+      font-size:10px;font-weight:700;margin-right:4px;margin-top:6px;
+    }
+    .profile-card {
+      background:var(--surface);border:2px solid #e0e0e0;border-radius:14px;padding:28px;
+    }
+    .profile-card .avatar {
+      width:88px;height:88px;border-radius:14px;border:3px solid var(--text);background:#e0e0e0;
+    }
+    .profile-card h2 { font-size:20px;font-weight:800;margin-top:12px; }
+    .profile-card .title { font-size:13px;color:var(--muted); }
+    .stat-grid {
+      display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px;
+    }
+    .stat-cell {
+      text-align:center;padding:14px;border:2px solid #e0e0e0;border-radius:10px;
+    }
+    .stat-cell .val { font-size:20px;font-weight:800; }
+    .stat-cell .lbl { font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase; }
+    .sidebar-link {
+      background:var(--text);color:#fff;border-radius:14px;padding:24px;
+    }
+    .sidebar-link .url {
+      background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:8px;
+      padding:10px 12px;font-family:monospace;font-size:11px;color:var(--gold);margin-top:10px;word-break:break-all;
+    }
+    .sidebar-link .progress-bar {
+      height:6px;border-radius:3px;background:rgba(255,255,255,.15);margin-top:12px;overflow:hidden;
+    }
+    .sidebar-link .progress-fill {
+      height:100%;border-radius:3px;background:var(--gold);width:50%;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ───── Header ───── -->
+  <header class="dash-header">
+    <div class="brand">
+      <div class="brand-icon"></div>
+      <span class="brand-name">TalentriX</span>
+    </div>
+    <div class="right">
+      <div class="pill">💬 Messages <span class="badge-count">3</span></div>
+      <span style="font-size:13px;color:var(--muted);">Jane Doe</span>
+      <div class="pill">🚪 Log out</div>
+    </div>
+  </header>
+
+  <!-- ───── Main ───── -->
+  <main class="dash-main">
+    <h1 class="dash-title">Job Seeker Dashboard</h1>
+    <p class="dash-sub">Browse roles, craft your profile, and share a portfolio employers will love.</p>
+
+    <!-- Tabs -->
+    <div class="wf-tabs">
+      <div class="wf-tab active">💼 Jobs</div>
+      <div class="wf-tab">👤 My Profile</div>
+      <div class="wf-tab">⚙️ Settings</div>
+    </div>
+
+    <!-- ── Jobs Tab ── -->
+    <div>
+      <!-- Toolbar -->
+      <div class="wf-toolbar">
+        <div class="wf-field" style="flex:1;">🔍 Search jobs, companies, skills…</div>
+        <div class="wf-field" style="width:140px;">All types ▾</div>
+        <div class="wf-field" style="width:130px;">All sources ▾</div>
+      </div>
+
+      <div class="card-grid card-grid-2">
+        <!-- Job 1 -->
+        <div class="job-card">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="company-icon">🏢</div>
+              <div>
+                <h4>Senior Frontend Engineer</h4>
+                <div class="meta">Acme Corp · Remote</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:8px;background:#e0f0ff;color:#0070c0;">Remotive</span>
+              <span class="match match-high">85% match</span>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;">💰 $120K — $160K · Full-time</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:6px;">Build and maintain the core product frontend using React and TypeScript.</p>
+          <div>
+            <span class="job-skill">React</span><span class="job-skill">TypeScript</span><span class="job-skill">GraphQL</span>
+          </div>
+          <div style="text-align:right;margin-top:8px;font-size:11px;font-weight:700;color:var(--muted);">View Details →</div>
+        </div>
+        <!-- Job 2 -->
+        <div class="job-card">
+          <div style="display:flex;justify-content:space-between;align-items:start;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="company-icon">🏢</div>
+              <div>
+                <h4>Backend Engineer</h4>
+                <div class="meta">Stripe · Remote</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:8px;background:#f0e0ff;color:#7000c0;">Arbeitnow</span>
+              <span class="match match-med">52% match</span>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;">💰 $140K — $180K · Full-time</div>
+          <p style="font-size:12px;color:var(--muted);margin-top:6px;">Design and build scalable payment APIs and microservices.</p>
+          <div>
+            <span class="job-skill">Python</span><span class="job-skill">Go</span><span class="job-skill">PostgreSQL</span>
+          </div>
+          <div style="text-align:right;margin-top:8px;font-size:11px;font-weight:700;color:var(--muted);">View Details →</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Profile Tab (hidden state) ── -->
+    <!--
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:24px;">
+      <div class="profile-card">
+        <div style="display:flex;gap:16px;">
+          <div class="avatar"></div>
+          <div>
+            <h2>Jane Doe</h2>
+            <div class="title">Senior Frontend Engineer (she/her)</div>
+            <div style="display:flex;gap:8px;margin-top:8px;font-size:11px;color:var(--muted);">
+              <span>📍 Lagos, Nigeria</span><span>🟢 Open to work</span>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+              <span style="font-size:10px;padding:4px 10px;border-radius:6px;background:#f0f0f0;font-weight:600;">LinkedIn</span>
+              <span style="font-size:10px;padding:4px 10px;border-radius:6px;background:#f0f0f0;font-weight:600;">GitHub</span>
+              <span style="font-size:10px;padding:4px 10px;border-radius:6px;background:#f0f0f0;font-weight:600;">Website</span>
+            </div>
+          </div>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-cell"><div class="val">4</div><div class="lbl">Roles</div></div>
+          <div class="stat-cell"><div class="val">12</div><div class="lbl">Skills</div></div>
+          <div class="stat-cell"><div class="val">8</div><div class="lbl">Projects</div></div>
+          <div class="stat-cell"><div class="val">2</div><div class="lbl">Certs</div></div>
+        </div>
+        <div style="margin-top:16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);">Summary</div>
+        <p style="font-size:12px;color:var(--muted);margin-top:6px;">Experienced frontend engineer with 6+ years building scalable web applications.</p>
+        <div style="margin-top:16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);">Experience</div>
+        <div style="margin-top:8px;">
+          <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--gold);margin-top:5px;flex-shrink:0;"></div>
+            <div><div style="font-size:13px;font-weight:700;">Senior Frontend Engineer</div><div style="font-size:11px;color:var(--muted);">Acme Corp · Jan 2022 — Present</div></div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--gold);margin-top:5px;flex-shrink:0;"></div>
+            <div><div style="font-size:13px;font-weight:700;">Frontend Developer</div><div style="font-size:11px;color:var(--muted);">StartUp Inc · Jun 2019 — Dec 2021</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar-link">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          <div style="width:32px;height:32px;border-radius:8px;background:var(--gold);display:flex;align-items:center;justify-content:center;">🔗</div>
+          <div style="font-size:14px;font-weight:700;">Your portfolio link</div>
+        </div>
+        <p style="font-size:12px;color:#aaa;line-height:1.6;">Everything in your profile is combined into this public page. Share it anywhere.</p>
+        <div class="url">https://talentrix.ai/portfolio/abc123</div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <div style="flex:1;text-align:center;padding:10px;border-radius:10px;background:var(--gold);font-size:12px;font-weight:700;color:var(--text);">📋 Copy link</div>
+          <div style="flex:1;text-align:center;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);font-size:12px;font-weight:700;color:#fff;">↗ View portfolio</div>
+        </div>
+        <div style="margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#aaa;">
+            <span>Portfolio completeness</span><span style="color:var(--gold);font-weight:700;">50%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill"></div></div>
+        </div>
+      </div>
+    </div>
+    -->
+
+  </main>
+
+</body>
+</html>

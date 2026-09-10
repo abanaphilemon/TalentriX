@@ -6,7 +6,7 @@ import { useContent } from '../context/ContentContext.jsx';
 
 // Logo mark — brand logo (or "TB" fallback) with gold accent
 const LogoMark = ({ branding }) => {
-  const name = branding?.name || 'Talent Bridge';
+  const name = branding?.name || 'TalentriX';
   const tagline = branding?.tagline || 'A · I';
   const logo = branding?.logo;
   return (

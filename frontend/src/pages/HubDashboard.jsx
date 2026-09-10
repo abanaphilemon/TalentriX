@@ -312,12 +312,12 @@ export default function HubDashboard() {
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden">
               {branding.logo ? (
-                <img src={branding.logo} alt={`${branding.name || 'Talent Bridge'} logo`} className="w-full h-full object-contain p-0.5" />
+                <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-0.5" />
               ) : (
                 <Network className="w-4 h-4 text-secondary" />
               )}
             </div>
-            <span className="font-display font-bold text-secondary">{branding.name || 'Talent Bridge'}</span>
+            <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-secondary/60 hidden sm:inline">

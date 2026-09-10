@@ -9,7 +9,7 @@ export default function RoleSelectModal() {
   const { mode, closeAuth, selectRole, role } = useAuth();
   const { content } = useContent();
   const open = mode === 'role';
-  const brandName = content.branding?.name || 'Talent Bridge AI';
+  const brandName = content.branding?.name || 'TalentriX';
 
   return (
     <AnimatePresence>

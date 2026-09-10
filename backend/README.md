@@ -1,6 +1,6 @@
 # Backend
 
-This folder contains the backend code for Talent Bridge AI.
+This folder contains the backend code for TalentriX.
 
 ## Structure
 

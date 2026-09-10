@@ -232,7 +232,7 @@ const SiteContent = mongoose.model('SiteContent', new mongoose.Schema({
   key: { type: String, default: 'landing' },
   // Brand — site name + logo (also shown in header/footer)
   branding: {
-    name: { type: String, default: 'Talent Bridge' },
+    name: { type: String, default: 'TalentriX' },
     tagline: { type: String, default: 'A · I' },
     logo: { type: String, default: '' },
   },
@@ -354,7 +354,7 @@ const Job = mongoose.model('Job', new mongoose.Schema({
 // seeding, per-section resets, and backfilling older/empty docs.
 const DEFAULT_SITE = {
   branding: {
-    name: 'Talent Bridge',
+    name: 'TalentriX',
     tagline: 'A · I',
     logo: '',
   },
@@ -364,7 +364,7 @@ const DEFAULT_SITE = {
     titleHighlight: 'extraordinary',
     titleSuffix: 'talent, faster.',
     subtitle:
-      'Talent Bridge AI matches you with pre-vetted candidates in days, not months. Our models read beyond the resume — surfacing people who truly fit your team.',
+      'TalentriX matches you with pre-vetted candidates in days, not months. Our models read beyond the resume — surfacing people who truly fit your team.',
     ctaPrimary: 'Get Started',
     ctaSecondary: 'See How It Works',
     image: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1200&auto=format&fit=crop&q=70',
@@ -382,11 +382,11 @@ const DEFAULT_SITE = {
     { label: 'Contact', href: '#contact' },
   ],
   about: {
-    eyebrow: 'About Talent Bridge AI',
+    eyebrow: 'About TalentriX',
     title: 'Recruitment, ',
     titleHighlight: 'reimagined',
     titleSuffix: ' by humans and machines.',
-    body: 'We built Talent Bridge AI because hiring the best people should not be a privilege of the biggest companies. Our platform pairs advanced language models with human recruiters to bring speed, fairness, and clarity to every search.',
+    body: 'We built TalentriX because hiring the best people should not be a privilege of the biggest companies. Our platform pairs advanced language models with human recruiters to bring speed, fairness, and clarity to every search.',
     image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&auto=format&fit=crop&q=70',
   },
   features: [
@@ -398,7 +398,7 @@ const DEFAULT_SITE = {
   cta: {
     title: 'The future of hiring is ',
     titleHighlight: 'already here.',
-    body: 'Join 1,200+ companies using Talent Bridge AI to build world-class teams in record time.',
+    body: 'Join 1,200+ companies using TalentriX to build world-class teams in record time.',
     buttonText: 'Book a Demo',
   },
   reviewsHeading: {
@@ -1078,7 +1078,7 @@ app.get('/api/jobs/external', async (req, res) => {
     try {
       const r = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'TalentBridgeAI-JobBoard/1.0' },
+        headers: { 'User-Agent': 'TalentriX-JobBoard/1.0' },
       });
       clearTimeout(timer);
       if (!r.ok) return null;
@@ -1803,7 +1803,7 @@ app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
 
 // Basic route
 app.get('/', (req, res) => {
-  res.json({ message: 'Talent Bridge AI API' });
+  res.json({ message: 'TalentriX API' });
 });
 
 // Start server

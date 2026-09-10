@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — Portfolio Page Wireframe</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .portfolio-stats {
+      display: flex;
+      justify-content: center;
+      gap: 28px;
+      margin-top: 24px;
+    }
+    .portfolio-stat {
+      text-align: center;
+    }
+    .portfolio-stat .val {
+      font-size: 22px;
+      font-weight: 800;
+    }
+    .portfolio-stat .lbl {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .portfolio-actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      margin-top: 24px;
+    }
+    .portfolio-actions .btn {
+      padding: 10px 22px;
+      border-radius: 24px;
+      font-size: 12px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .portfolio-actions .btn-dark {
+      background: var(--text);
+      color: #fff;
+    }
+    .portfolio-actions .btn-gold {
+      background: var(--gold);
+      color: var(--text);
+    }
+    .skills-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .skill-pill {
+      padding: 6px 14px;
+      border-radius: 20px;
+      border: 2px solid #e0e0e0;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--surface);
+    }
+    .lang-pill {
+      padding: 6px 14px;
+      border-radius: 20px;
+      background: #f0f0f0;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .contact-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 10px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .contact-row .icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    .contact-row .blur {
+      filter: blur(4px);
+      user-select: none;
+    }
+    .contact-row .lock {
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .chat-fab {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: var(--text);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 4px 16px rgba(0,0,0,.2);
+      z-index: 40;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ───── Header ───── -->
+  <header class="wf-header">
+    <div class="logo">
+      <div class="logo-icon"></div>
+      <span class="logo-name">TalentriX</span>
+    </div>
+    <nav style="display:flex;gap:10px;">
+      <div style="padding:8px 16px;border-radius:20px;background:var(--text);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;gap:5px;">
+        📄 Download CV
+      </div>
+      <div style="padding:8px 16px;border-radius:20px;background:var(--gold);color:var(--text);font-size:12px;font-weight:700;display:flex;align-items:center;gap:5px;">
+        💬 Hire me
+      </div>
+    </nav>
+  </header>
+
+  <!-- ───── Hero ───── -->
+  <section class="portfolio-hero">
+    <!-- Badges -->
+    <div class="badges">
+      <div class="badge">🟢 Open to work</div>
+      <div class="badge">✅ Recommended by Acme Hub</div>
+      <div class="badge">★★★★☆ 4/5</div>
+    </div>
+
+    <!-- Avatar -->
+    <div class="avatar"></div>
+
+    <h1>Jane Doe</h1>
+    <div class="title">Senior Frontend Engineer · she/her</div>
+    <div class="meta">
+      <span>📍 Lagos, Nigeria</span>
+      <span>📧 jane@example.com</span>
+    </div>
+
+    <!-- Stats -->
+    <div class="portfolio-stats">
+      <div class="portfolio-stat"><div class="val">6+</div><div class="lbl">Years experience</div></div>
+      <div class="portfolio-stat"><div class="val">4</div><div class="lbl">Roles held</div></div>
+      <div class="portfolio-stat"><div class="val">8</div><div class="lbl">Projects</div></div>
+      <div class="portfolio-stat"><div class="val">12</div><div class="lbl">Skills</div></div>
+    </div>
+
+    <!-- Actions -->
+    <div class="portfolio-actions">
+      <div class="btn btn-dark">📄 Download CV</div>
+      <div class="btn btn-gold">💬 Hire me</div>
+    </div>
+  </section>
+
+  <!-- ───── Content ───── -->
+  <main class="container-s" style="padding-bottom:40px;">
+
+    <!-- Experience -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">💼</div>
+        <h3>Experience</h3>
+        <div class="line"></div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div>
+          <h4>Senior Frontend Engineer</h4>
+          <div class="period">Jan 2022 — Present</div>
+          <p>Led a team of 5 engineers building a design system and migrating the product to React 18.</p>
+        </div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div>
+          <h4>Frontend Developer</h4>
+          <div class="period">Jun 2019 — Dec 2021</div>
+          <p>Built responsive web applications serving 200K+ monthly active users.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Education -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">🎓</div>
+        <h3>Education</h3>
+        <div class="line"></div>
+      </div>
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div>
+          <h4>B.Sc. Computer Science</h4>
+          <div class="period">2015 — 2019</div>
+          <p>University of Lagos</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Projects -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">📁</div>
+        <h3>Projects</h3>
+        <div class="line"></div>
+      </div>
+      <div class="card-grid card-grid-2">
+        <div class="wf-card">
+          <h4>Taskflow — Project Manager</h4>
+          <p>React, Node.js, PostgreSQL</p>
+          <p style="margin-top:6px;">A full-stack task management app with real-time updates and team collaboration.</p>
+        </div>
+        <div class="wf-card">
+          <h4>DesignToken CLI</h4>
+          <p>TypeScript, Figma API</p>
+          <p style="margin-top:6px;">CLI tool that syncs design tokens between Figma and code repositories.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Skills -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">⚡</div>
+        <h3>Skills</h3>
+        <div class="line"></div>
+      </div>
+      <div class="skills-row">
+        <div class="skill-pill">React</div>
+        <div class="skill-pill">TypeScript</div>
+        <div class="skill-pill">Node.js</div>
+        <div class="skill-pill">PostgreSQL</div>
+        <div class="skill-pill">Tailwind CSS</div>
+        <div class="skill-pill">GraphQL</div>
+        <div class="skill-pill">Docker</div>
+        <div class="skill-pill">AWS</div>
+        <div class="skill-pill">Figma</div>
+        <div class="skill-pill">Git</div>
+      </div>
+    </div>
+
+    <!-- Languages -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">🌍</div>
+        <h3>Languages</h3>
+        <div class="line"></div>
+      </div>
+      <div class="skills-row">
+        <div class="lang-pill">English — Fluent</div>
+        <div class="lang-pill">Yoruba — Native</div>
+        <div class="lang-pill">French — Basic</div>
+      </div>
+    </div>
+
+    <!-- Contact (locked) -->
+    <div class="portfolio-section">
+      <div class="section-label">
+        <div class="icon">📬</div>
+        <h3>Contact</h3>
+        <div class="line"></div>
+      </div>
+      <div class="contact-row">
+        <div class="icon">📧</div>
+        <span class="blur">jane@example.com</span>
+        <span class="lock">🔒</span>
+        <span style="font-size:11px;color:var(--muted);">Unlocks inside the secure chat</span>
+      </div>
+      <div class="contact-row">
+        <div class="icon">📱</div>
+        <span>+234 801 234 5678</span>
+      </div>
+      <div class="contact-row">
+        <div class="icon">💻</div>
+        <span>github.com/janedoe</span>
+      </div>
+      <div class="contact-row">
+        <div class="icon">🌐</div>
+        <span>janedoe.dev</span>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Chat FAB -->
+  <div class="chat-fab">💬</div>
+
+  <!-- ───── Footer ───── -->
+  <footer style="text-align:center;padding:24px;font-size:11px;color:var(--muted);border-top:2px solid #e0e0e0;">
+    © 2026 TalentriX · Live portfolio
+  </footer>
+
+</body>
+</html>

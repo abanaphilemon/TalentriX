@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — Admin Dashboard Wireframe</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .dash-header {
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 32px;background:var(--surface);border-bottom:2px solid #e0e0e0;
+      position:sticky;top:0;z-index:20;
+    }
+    .dash-header .brand { display:flex;align-items:center;gap:8px; }
+    .dash-header .brand-icon { width:32px;height:32px;border-radius:8px;background:var(--text);display:flex;align-items:center;justify-content:center; }
+    .dash-header .brand-name { font-weight:800;font-size:14px; }
+    .admin-layout {
+      display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 56px);
+    }
+    .admin-sidebar {
+      border-right:2px solid #e0e0e0;background:var(--surface);padding:20px 0;
+    }
+    .admin-sidebar .group-label {
+      font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);
+      padding:0 20px;margin-bottom:6px;margin-top:20px;
+    }
+    .admin-sidebar .group-label:first-child { margin-top:0; }
+    .admin-sidebar .nav-item {
+      padding:9px 20px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;display:flex;flex-direction:column;
+    }
+    .admin-sidebar .nav-item.active {
+      color:var(--text);background:#f0f0f0;
+    }
+    .admin-sidebar .nav-item .desc { font-size:10px;font-weight:400;color:var(--muted);margin-top:1px; }
+    .admin-content { padding:32px 40px; }
+    .admin-content h2 { font-size:22px;font-weight:800;margin-bottom:4px; }
+    .admin-content .desc { font-size:13px;color:var(--muted);margin-bottom:24px; }
+    .admin-actions {
+      display:flex;gap:10px;margin-bottom:28px;
+    }
+    .admin-btn {
+      padding:10px 20px;border-radius:10px;font-size:13px;font-weight:700;display:inline-flex;align-items:center;gap:6px;
+    }
+    .admin-btn-primary { background:var(--text);color:#fff; }
+    .admin-btn-secondary { background:#f0f0f0;color:var(--text); }
+    .admin-btn-danger { background:#fee;color:#c00;border:2px solid #fcc; }
+    .form-group { margin-bottom:18px; }
+    .form-group label {
+      display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:6px;
+    }
+    .form-group .wf-field { width:100%; }
+    .form-row { display:grid;grid-template-columns:1fr 1fr;gap:16px; }
+    .toast-ok {
+      padding:10px 16px;border-radius:10px;background:#e0fce0;color:#1a7a1a;font-size:13px;font-weight:600;margin-bottom:16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ───── Header ───── -->
+  <header class="dash-header">
+    <div class="brand">
+      <div class="brand-icon"><span style="color:#fff;font-size:14px;">🛡</span></div>
+      <span class="brand-name">Admin CMS</span>
+    </div>
+    <div>
+      <div class="pill" style="padding:7px 14px;border-radius:8px;background:#f0f0f0;font-size:12px;font-weight:700;display:inline-flex;align-items:center;gap:5px;">🚪 Log out</div>
+    </div>
+  </header>
+
+  <div class="admin-layout">
+
+    <!-- ───── Sidebar ───── -->
+    <aside class="admin-sidebar">
+      <div class="group-label">Branding</div>
+      <div class="nav-item active">
+        Site Name &amp; Logo
+        <span class="desc">Name, tagline and logo shown in the header and footer.</span>
+      </div>
+
+      <div class="group-label">Moderation</div>
+      <div class="nav-item">
+        Review Moderation
+        <span class="desc">Approve or remove visitor reviews.</span>
+      </div>
+
+      <div class="group-label">Landing Page</div>
+      <div class="nav-item">Hero <span class="desc">Badge, headline, buttons and hero image.</span></div>
+      <div class="nav-item">Hero Stats <span class="desc">Stat counters below the headline.</span></div>
+      <div class="nav-item">Navigation <span class="desc">Links in the header menu.</span></div>
+      <div class="nav-item">About <span class="desc">Intro text and image.</span></div>
+      <div class="nav-item">About Features <span class="desc">Feature cards in the about section.</span></div>
+      <div class="nav-item">CTA Banner <span class="desc">Mid-page call-to-action banner.</span></div>
+
+      <div class="group-label">Social Proof</div>
+      <div class="nav-item">Reviews Heading <span class="desc">Heading for the visitor review section.</span></div>
+      <div class="nav-item">Partners Heading <span class="desc">Heading above partner logos.</span></div>
+      <div class="nav-item">Partners <span class="desc">Partner logos shown on the site.</span></div>
+
+      <div class="group-label">Site Footer</div>
+      <div class="nav-item">Footer <span class="desc">Tagline, links and newsletter blurb.</span></div>
+      <div class="nav-item">Contact Info <span class="desc">Email, phone and address.</span></div>
+      <div class="nav-item">Contact Heading <span class="desc">Heading for the contact section.</span></div>
+
+      <div class="group-label">Payments</div>
+      <div class="nav-item">Monnify Config <span class="desc">API keys, contract code, and chat pricing.</span></div>
+    </aside>
+
+    <!-- ───── Content ───── -->
+    <main class="admin-content">
+      <!-- Toast -->
+      <div class="toast-ok">✓ Saved. The landing page now shows these changes.</div>
+
+      <h2>Site Name &amp; Logo</h2>
+      <p class="desc">Name, tagline and logo shown in the header and footer.</p>
+
+      <div class="admin-actions">
+        <div class="admin-btn admin-btn-primary">💾 Save</div>
+        <div class="admin-btn admin-btn-secondary">↻ Reset section</div>
+        <div class="admin-btn admin-btn-danger">⚠ Reset all content</div>
+      </div>
+
+      <!-- Form fields -->
+      <div class="form-row">
+        <div class="form-group">
+          <label>Site name</label>
+          <div class="wf-field">TalentriX</div>
+        </div>
+        <div class="form-group">
+          <label>Tagline (small text under the name)</label>
+          <div class="wf-field">A · I</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Site logo</label>
+        <div class="wf-field">https://…/logo.png</div>
+        <div style="margin-top:8px;display:flex;gap:10px;align-items:center;">
+          <div style="width:48px;height:48px;border-radius:10px;background:#f0f0f0;border:2px solid #e0e0e0;display:flex;align-items:center;justify-content:center;font-size:18px;">✦</div>
+          <div style="padding:6px 12px;border-radius:8px;background:#f0f0f0;font-size:11px;font-weight:700;cursor:pointer;">📎 Upload logo</div>
+          <span style="font-size:10px;color:var(--muted);">JPG or PNG under 1 MB</span>
+        </div>
+      </div>
+
+      <!-- Sample preview area -->
+      <div style="margin-top:32px;">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--muted);margin-bottom:12px;">Preview</div>
+        <div class="block" style="height:80px;border-width:1px;border-radius:12px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="width:32px;height:32px;border-radius:8px;background:var(--text);"></div>
+            <span style="font-weight:800;font-size:16px;">TalentriX</span>
+            <span style="font-size:12px;color:var(--muted);margin-left:4px;">A · I</span>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+</body>
+</html>

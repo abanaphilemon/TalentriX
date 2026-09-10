@@ -41,7 +41,7 @@ export default function AdminLoginPage() {
           </div>
           <h1 className="font-display text-2xl font-bold text-secondary">Admin Access</h1>
           <p className="text-sm text-secondary/60 mt-1">
-            Sign in to manage the Talent Bridge AI site.
+            Sign in to manage the TalentriX site.
           </p>
         </div>
 

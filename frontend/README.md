@@ -1,6 +1,6 @@
-# Talent Bridge AI — Frontend
+# TalentriX — Frontend
 
-A production-ready React landing page for **Talent Bridge AI**, an AI-powered recruitment platform. Built with Vite, Tailwind CSS, Framer Motion, and Three.js.
+A production-ready React landing page for **TalentriX**, an AI-powered recruitment platform. Built with Vite, Tailwind CSS, Framer Motion, and Three.js.
 
 ## ✨ Features
 

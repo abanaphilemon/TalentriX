@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — Employer Dashboard Wireframe</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .dash-header {
+      display:flex;align-items:center;justify-content:space-between;
+      padding:14px 32px;background:var(--surface);border-bottom:2px solid #e0e0e0;
+      position:sticky;top:0;z-index:20;
+    }
+    .dash-header .brand { display:flex;align-items:center;gap:8px; }
+    .dash-header .brand-icon { width:32px;height:32px;border-radius:8px;background:var(--text); }
+    .dash-header .brand-name { font-weight:800;font-size:14px; }
+    .dash-header .right { display:flex;align-items:center;gap:12px; }
+    .dash-header .pill {
+      padding:7px 14px;border-radius:8px;background:#f0f0f0;
+      font-size:12px;font-weight:700;color:var(--text);display:inline-flex;align-items:center;gap:5px;
+    }
+    .badge-count {
+      min-width:18px;height:18px;border-radius:10px;background:var(--text);color:#fff;
+      font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;
+    }
+    .dash-main { max-width:1100px;margin:0 auto;padding:32px; }
+    .dash-title { font-size:24px;font-weight:800;margin-bottom:4px; }
+    .dash-sub { font-size:13px;color:var(--muted);margin-bottom:24px; }
+    .seeker-card {
+      background:var(--surface);border:2px solid #e0e0e0;border-radius:14px;padding:20px;
+    }
+    .seeker-card .avatar {
+      width:44px;height:44px;border-radius:10px;background:var(--text);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;
+    }
+    .seeker-card h4 { font-size:14px;font-weight:700;margin-bottom:2px; }
+    .seeker-card .email { font-size:11px;color:var(--muted); }
+    .skill-tag {
+      display:inline-block;padding:3px 10px;border-radius:12px;background:#f0f0f0;
+      font-size:10px;font-weight:700;margin-right:4px;margin-top:6px;
+    }
+    .card-btn {
+      display:inline-flex;align-items:center;gap:4px;margin-top:10px;
+      padding:6px 14px;border-radius:8px;font-size:11px;font-weight:700;
+    }
+    .btn-dark { background:var(--text);color:#fff; }
+    .btn-secondary { background:#f0f0f0;color:var(--text); }
+    .org-form-card {
+      background:var(--surface);border:2px solid #e0e0e0;border-radius:14px;padding:28px;
+    }
+    .org-form-card .field-row {
+      display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ───── Header ───── -->
+  <header class="dash-header">
+    <div class="brand">
+      <div class="brand-icon"></div>
+      <span class="brand-name">TalentriX</span>
+    </div>
+    <div class="right">
+      <div class="pill">💬 Messages <span class="badge-count">1</span></div>
+      <span style="font-size:13px;color:var(--muted);">Sarah @ Google</span>
+      <div class="pill">🚪 Log out</div>
+    </div>
+  </header>
+
+  <!-- ───── Main ───── -->
+  <main class="dash-main">
+    <h1 class="dash-title">Employer Dashboard</h1>
+    <p class="dash-sub">Browse talent, manage your company profile, and start secure chats.</p>
+
+    <!-- Tabs -->
+    <div class="wf-tabs">
+      <div class="wf-tab active">👥 Seekers</div>
+      <div class="wf-tab">🏢 Profile</div>
+    </div>
+
+    <!-- ── Seekers Tab ── -->
+    <div>
+      <!-- Toolbar -->
+      <div class="wf-toolbar">
+        <div class="wf-field" style="flex:1;">🔍 Search by name, email, or skill…</div>
+        <div class="wf-field" style="width:140px;">All sources ▾</div>
+      </div>
+
+      <div class="card-grid card-grid-3">
+        <!-- Seeker 1 -->
+        <div class="seeker-card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div class="avatar">JD</div>
+            <div>
+              <h4>Jane Doe</h4>
+              <div class="email">jane@example.com</div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);">Senior Frontend Engineer</div>
+          <div><span class="skill-tag">React</span><span class="skill-tag">TypeScript</span><span class="skill-tag">Node.js</span></div>
+          <div style="display:flex;gap:6px;margin-top:10px;">
+            <div class="card-btn btn-dark">👁 View</div>
+            <div class="card-btn btn-secondary">💬 Chat</div>
+          </div>
+        </div>
+        <!-- Seeker 2 -->
+        <div class="seeker-card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div class="avatar">AK</div>
+            <div>
+              <h4>Amina Khan</h4>
+              <div class="email">amina@example.com</div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);">Backend Engineer</div>
+          <div><span class="skill-tag">Python</span><span class="skill-tag">Django</span><span class="skill-tag">PostgreSQL</span></div>
+          <div style="display:flex;gap:6px;margin-top:10px;">
+            <div class="card-btn btn-dark">👁 View</div>
+            <div class="card-btn btn-secondary">💬 Chat</div>
+          </div>
+        </div>
+        <!-- Seeker 3 -->
+        <div class="seeker-card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div class="avatar">MO</div>
+            <div>
+              <h4>Mark Obi</h4>
+              <div class="email">mark@example.com</div>
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);">DevOps Engineer</div>
+          <div><span class="skill-tag">AWS</span><span class="skill-tag">Docker</span><span class="skill-tag">Terraform</span></div>
+          <div style="display:flex;gap:6px;margin-top:10px;">
+            <div class="card-btn btn-dark">👁 View</div>
+            <div class="card-btn btn-secondary">💬 Chat</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Profile Tab (hidden state) ── -->
+    <!--
+    <div class="org-form-card">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+        <div style="width:36px;height:36px;border-radius:10px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;">🏢</div>
+        <div>
+          <div style="font-size:16px;font-weight:800;">Company Profile</div>
+          <div style="font-size:11px;color:var(--muted);">Your company details as shown to job seekers.</div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Full Name</div>
+          <div class="wf-field">Sarah Johnson</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Company</div>
+          <div class="wf-field">Google</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Job Title</div>
+          <div class="wf-field">Engineering Manager</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Location</div>
+          <div class="wf-field">San Francisco, CA</div>
+        </div>
+        <div style="grid-column:1/-1;">
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Bio</div>
+          <div class="wf-field" style="min-height:60px;">Building the future of hiring at Google…</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">Company Logo</div>
+          <div class="wf-field">https://…/logo.png or upload</div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:700;margin-bottom:6px;">LinkedIn</div>
+          <div class="wf-field">https://linkedin.com/in/sarah</div>
+        </div>
+      </div>
+      <div style="margin-top:20px;display:flex;gap:10px;align-items:center;">
+        <div style="padding:10px 24px;border-radius:10px;background:var(--text);color:#fff;font-size:13px;font-weight:700;">💾 Save changes</div>
+        <span style="font-size:12px;color:var(--muted);">Profile saved.</span>
+      </div>
+    </div>
+    -->
+
+  </main>
+
+</body>
+</html>

@@ -27,7 +27,7 @@ export default function About() {
               transition={{ duration: 0.5 }}
               className="inline-block text-xs font-bold tracking-widest text-secondary/60 uppercase mb-3"
             >
-              {about.eyebrow || 'About Talent Bridge AI'}
+              {about.eyebrow || 'About TalentriX'}
             </motion.span>
 
             <motion.h2

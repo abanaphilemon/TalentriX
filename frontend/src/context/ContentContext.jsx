@@ -13,7 +13,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 // Fully-populated default content so the site works even if the DB is empty.
 const defaults = {
   branding: {
-    name: 'Talent Bridge',
+    name: 'TalentriX',
     tagline: 'A · I',
     logo: '',
   },
@@ -23,7 +23,7 @@ const defaults = {
     titleHighlight: 'extraordinary',
     titleSuffix: 'talent, faster.',
     subtitle:
-      'Talent Bridge AI matches you with pre-vetted candidates in days, not months. Our models read beyond the resume — surfacing people who truly fit your team.',
+      'TalentriX matches you with pre-vetted candidates in days, not months. Our models read beyond the resume — surfacing people who truly fit your team.',
     ctaPrimary: 'Get Started',
     ctaSecondary: 'See How It Works',
     image: defaultImages.hero,
@@ -33,11 +33,11 @@ const defaults = {
   heroStats: defaultHeroStats,
   navLinks: defaultNav,
   about: {
-    eyebrow: 'About Talent Bridge AI',
+    eyebrow: 'About TalentriX',
     title: 'Recruitment, ',
     titleHighlight: 'reimagined',
     titleSuffix: ' by humans and machines.',
-    body: 'We built Talent Bridge AI because hiring the best people should not be a privilege of the biggest companies. Our platform pairs advanced language models with human recruiters to bring speed, fairness, and clarity to every search.',
+    body: 'We built TalentriX because hiring the best people should not be a privilege of the biggest companies. Our platform pairs advanced language models with human recruiters to bring speed, fairness, and clarity to every search.',
     image: defaultImages.about,
   },
   features: [
@@ -49,7 +49,7 @@ const defaults = {
   cta: {
     title: 'The future of hiring is ',
     titleHighlight: 'already here.',
-    body: 'Join 1,200+ companies using Talent Bridge AI to build world-class teams in record time.',
+    body: 'Join 1,200+ companies using TalentriX to build world-class teams in record time.',
     buttonText: 'Book a Demo',
   },
   partnersHeading: {

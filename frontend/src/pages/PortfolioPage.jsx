@@ -194,7 +194,7 @@ export default function PortfolioPage() {
               )}
             </div>
             <span className="font-display font-bold tracking-tight group-hover:text-primary transition-colors">
-              {branding.name || 'Talent Bridge'}
+              {branding.name || 'TalentriX'}
             </span>
           </Link>
           <nav className="flex items-center gap-2">
@@ -628,7 +628,7 @@ export default function PortfolioPage() {
       <footer className="border-t border-secondary/10">
         <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-secondary/50">
           <span>
-            © {new Date().getFullYear()} {branding.name || 'Talent Bridge'} · Live portfolio
+            © {new Date().getFullYear()} {branding.name || 'TalentriX'} · Live portfolio
           </span>
           {p.createdAt && (
             <span className="inline-flex items-center gap-1.5">

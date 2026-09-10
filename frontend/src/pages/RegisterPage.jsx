@@ -182,12 +182,12 @@ function AuthShell({ children }) {
         <div className="flex items-center gap-2 mb-6">
           <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center overflow-hidden">
             {branding.logo ? (
-              <img src={branding.logo} alt={`${branding.name || 'Talent Bridge'} logo`} className="w-full h-full object-contain p-1.5" />
+              <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-1.5" />
             ) : (
               <Network className="w-5 h-5 text-secondary" />
             )}
           </div>
-          <span className="font-display font-bold text-secondary">{branding.name || 'Talent Bridge'}</span>
+          <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
         </div>
         {children}
       </div>

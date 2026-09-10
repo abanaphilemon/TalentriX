@@ -139,7 +139,7 @@ export default function AuthPage() {
   const [submitError, setSubmitError] = useState('');
 
   const { content } = useContent();
-  const brandName = content.branding?.name || 'Talent Bridge AI';
+  const brandName = content.branding?.name || 'TalentriX';
 
   const {
     register,

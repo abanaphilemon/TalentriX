@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalentriX — Auth Page Wireframe</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body style="background:#e8e8e8;">
+
+  <!-- Backdrop -->
+  <div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;"></div>
+
+  <!-- Modal -->
+  <div class="wf-modal">
+    <div class="auth-split" style="max-width:860px;margin:0 auto;">
+
+      <!-- Left brand panel -->
+      <div class="auth-left">
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:#888;margin-bottom:4px;">← Change role</div>
+          <div style="width:48px;height:48px;border-radius:12px;background:#555;margin-bottom:16px;display:flex;align-items:center;justify-content:center;">
+            <span style="font-size:22px;">👤</span>
+          </div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#888;margin-bottom:6px;">JOB SEEKER</div>
+          <h2>Job Seeker</h2>
+          <p>Get matched with roles that fit your skills and ambitions.</p>
+          <ul>
+            <li>Get matched in days, not months</li>
+            <li>Your profile seen by 1,200+ companies</li>
+            <li>Privacy-first — you control who sees what</li>
+          </ul>
+        </div>
+        <div class="footer">© 2026 TalentriX</div>
+      </div>
+
+      <!-- Right form panel -->
+      <div class="auth-right">
+        <div class="wf-close">✕</div>
+        <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;">← Change role</div>
+        <h3>Welcome back</h3>
+        <p class="sub">Sign in to access your dashboard.</p>
+
+        <!-- Tabs -->
+        <div class="auth-tabs">
+          <div class="auth-tab active">Login</div>
+          <div class="auth-tab">Register</div>
+        </div>
+
+        <!-- Google -->
+        <div class="auth-google">Continue with Google</div>
+
+        <!-- Divider -->
+        <div class="auth-divider">or sign in with email</div>
+
+        <!-- Fields -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="wf-field">📧  Email</div>
+          <div class="wf-field">🔒  Password</div>
+        </div>
+
+        <div style="text-align:right;margin-top:6px;">
+          <span style="font-size:11px;color:var(--muted);font-weight:600;">Forgot password?</span>
+        </div>
+
+        <div class="wf-btn wf-btn-primary" style="margin-top:18px;">Sign In  →</div>
+
+        <p class="auth-terms">
+          By continuing, you agree to our <u>Terms</u> and <u>Privacy Policy</u>.
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>
