@@ -24,10 +24,12 @@ import {
   MessageSquare,
   CreditCard,
   AlertTriangle,
+  Target,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
+import EmployerRequestTalent from './EmployerRequestTalent.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -378,6 +380,16 @@ export default function EmployerDashboard() {
             }`}
           >
             <Users className="w-4 h-4" /> Talent Pool
+          </button>
+          <button
+            onClick={() => setTab('requestTalent')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'requestTalent'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <Target className="w-4 h-4" /> Request Talent
           </button>
         </div>
 
@@ -834,6 +846,8 @@ export default function EmployerDashboard() {
           </div>
         </div>
       )}
+
+      {tab === 'requestTalent' && <EmployerRequestTalent />}
 
       {/* Secure end-to-end encrypted chat */}
       <SecureChat open={chatOpen} onClose={closeChat} seedId={chatSeed} />

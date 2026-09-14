@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -70,6 +72,17 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['hub', 'seeker', 'employer', 'admin'], required: true },
+
+  // Admin moderation — every new account starts as `pending` and needs an
+  // admin to approve it before the dashboard/portfolio becomes accessible.
+  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  active: { type: Boolean, default: true },
+  // Set once the user completes onboarding — used to route them into the
+  // onboarding flow after registration, even if they don't finish it in one go.
+  onboardingDone: { type: Boolean, default: false },
+  // Set once the user completes the (mandatory) admin video interview. Users
+  // can only open their dashboard after this step is finished.
+  interviewDone: { type: Boolean, default: false },
 
   // Secure chat — keypair is generated and stored by the server so chat works
   // with zero setup. pubkey = SPKI base64 (shared with chat partners);
@@ -177,6 +190,10 @@ function publicUser(u) {
     name: u.name,
     email: u.email,
     role: u.role,
+    status: u.status || 'approved',
+    active: u.active !== false,
+    onboardingDone: u.onboardingDone !== false,
+    interviewDone: u.interviewDone !== false,
     hubRef: u.hubRef,
     company: u.company,
     title: u.title,
@@ -350,6 +367,56 @@ const Job = mongoose.model('Job', new mongoose.Schema({
   postedAt: { type: Date, default: Date.now },
 }));
 
+// Admin video-interview workflow — after a user is approved they must pick a
+// date/time for a call with an admin, the admin confirms it, and then the two
+// sides meet in the on-site video room. interviewDone on the user flips to
+// true only after the admin marks the call as completed.
+const Interview = mongoose.model('Interview', new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  proposedDate: { type: Date, required: true },
+  proposedTime: { type: String, default: '' },
+  notes: { type: String, default: '' },
+  status: { type: String, enum: ['proposed', 'accepted', 'rejected', 'completed', 'cancelled'], default: 'proposed' },
+  adminNotes: { type: String, default: '' },
+  scheduledAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// WebRTC signaling payloads for the on-site video interview. Two sides (the
+// admin + the user) exchange their offer/answer and ICE candidates by polling
+// these records, so no external signaling server is required.
+const Signal = mongoose.model('Signal', new mongoose.Schema({
+  interviewId: { type: mongoose.Schema.Types.ObjectId, ref: 'Interview', required: true },
+  kind: { type: String, enum: ['offer', 'answer'], required: true },
+  sdp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+}));
+const IceCandidate = mongoose.model('IceCandidate', new mongoose.Schema({
+  interviewId: { type: mongoose.Schema.Types.ObjectId, ref: 'Interview', required: true },
+  kind: { type: String, enum: ['offer', 'answer'], required: true },
+  candidate: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// Employer "Request Talent" — the employer describes the role they're hiring
+// for (skills, tools, requirements) and the platform scores every approved
+// seeker against it, returning ranked matches with a match %.
+const TalentRequest = mongoose.model('TalentRequest', new mongoose.Schema({
+  employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, default: '' },
+  role: { type: String, required: true },
+  location: { type: String, default: '' },
+  type: { type: String, default: 'Full-time' },
+  description: { type: String, default: '' },
+  skills: { type: [String], default: [] },
+  tools: { type: [String], default: [] },
+  requirements: { type: [String], default: [] },
+  budget: { type: String, default: '' },
+  status: { type: String, enum: ['open', 'closed'], default: 'open' },
+  results: { type: mongoose.Schema.Types.Mixed, default: [] },
+  createdAt: { type: Date, default: Date.now },
+}));
+
 // Full default landing-page content. This is the source of truth for initial
 // seeding, per-section resets, and backfilling older/empty docs.
 const DEFAULT_SITE = {
@@ -487,10 +554,38 @@ async function seedSite() {
 
   let admin = await User.findOne({ email: DEFAULT_ADMIN.email });
   if (!admin) {
-    admin = new User({ ...DEFAULT_ADMIN, role: 'admin' });
+    admin = new User({ ...DEFAULT_ADMIN, role: 'admin', status: 'approved', active: true });
     await admin.save();
     console.log('Seeded default admin account');
+  } else {
+    // Field-update only — the doc may contain stale/invalid data written by
+    // older builds, and full-document validation (admin.save()) would reject
+    // it. We only need to guarantee the moderation flags below.
+    admin.status = 'approved';
+    admin.active = true;
+    await User.updateOne({ _id: admin._id }, { $set: { status: 'approved', active: true } });
   }
+
+  // Backfill accounts created before moderation existed — treat them as approved
+  // so existing users aren't locked out by the new workflow.
+  await User.updateMany(
+    { status: { $exists: false } },
+    { $set: { status: 'approved', active: true } }
+  );
+
+  // Accounts that existed before onboarding was introduced already know the app —
+  // skip onboarding for them.
+  await User.updateMany(
+    { onboardingDone: { $exists: false } },
+    { $set: { onboardingDone: true } }
+  );
+
+  // Accounts that existed before interviews were introduced are treated as
+  // already interviewed so they aren't locked out by the new workflow.
+  await User.updateMany(
+    { interviewDone: { $exists: false } },
+    { $set: { interviewDone: true } }
+  );
 
   let doc = await SiteContent.findOne({ key: 'landing' });
   if (!doc) {
@@ -557,6 +652,8 @@ function partnerLogo(name) {
 // once they have a company name or logo.
 async function syncSitePartner(user) {
   if (!user || (user.role !== 'hub' && user.role !== 'employer')) return;
+  // Only approved, active organizations appear on the public partners list.
+  if (user.status !== 'approved' || user.active === false) return;
   if (user.role === 'employer' && !(user.company && user.company.trim()) && !(user.logo && user.logo.trim())) return;
   const name = (user.company && user.company.trim()) || user.name;
   const logo = (user.logo && user.logo.trim()) || partnerLogo(name);
@@ -676,6 +773,13 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
+    // Disabled accounts can't sign in at all. Pending/rejected users may sign
+    // in so the frontend can show the correct status screen — dashboards stay
+    // locked until an admin approves the account.
+    if (user.active === false) {
+      return res.status(403).json({ message: 'This account has been disabled. Contact an administrator.' });
+    }
+
     // Create JWT token
     const token = jwt.sign(
       { userId: user._id, role: user.role },
@@ -754,7 +858,7 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
       'name', 'company', 'title', 'location', 'bio', 'linkedin',
       'skills', 'languages', 'summary', 'pronouns', 'phone', 'github',
       'website', 'availability', 'experience', 'education', 'certifications',
-      'projects', 'avatar', 'resumeLink', 'logo', 'cv',
+      'projects', 'avatar', 'resumeLink', 'logo', 'cv', 'onboardingDone',
     ];
     const updates = {};
     for (const key of allowed) {
@@ -798,7 +902,7 @@ app.get('/api/hub/link', authenticateToken, async (req, res) => {
       hub.hubRef = code;
       await hub.save();
     }
-    const count = await User.countDocuments({ role: 'seeker', hubId: hub._id });
+    const count = await User.countDocuments({ role: 'seeker', hubId: hub._id, status: 'approved', active: true });
     // Make sure this existing hub shows up as a landing partner too.
     await syncSitePartner(hub);
     res.json({ hubRef: hubRefOrNull(hub), link: getHubLink(hubRefOrNull(hub)), count });
@@ -814,7 +918,7 @@ app.get('/api/hub/seekers', authenticateToken, async (req, res) => {
     if (req.user.role !== 'hub') {
       return res.status(403).json({ message: 'Only hub accounts can access this' });
     }
-    const seekers = await User.find({ role: 'seeker', hubId: req.user.userId })
+    const seekers = await User.find({ role: 'seeker', hubId: req.user.userId, status: 'approved', active: true })
       .select('-password')
       .sort({ createdAt: -1 });
     res.json({ seekers: seekers.map(publicUser) });
@@ -1035,7 +1139,7 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     if (req.user.role !== 'employer') {
       return res.status(403).json({ message: 'Only employer accounts can view seekers' });
     }
-    const filter = { role: 'seeker' };
+    const filter = { role: 'seeker', status: 'approved', active: true };
     if (req.query.source === 'hub') {
       filter.hubId = { $ne: null };
     }
@@ -1249,6 +1353,10 @@ app.get('/api/public/profile/:id', async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user || user.role !== 'seeker') {
+      return res.status(404).json({ message: 'Portfolio not found' });
+    }
+    // Pending or disabled accounts are not publicly visible until approved.
+    if (user.status !== 'approved' || user.active === false) {
       return res.status(404).json({ message: 'Portfolio not found' });
     }
     // Hub endorsement badge — the hub this talent registered through, if they rated them
@@ -1590,6 +1698,449 @@ async function monnifyToken() {
   return { token: d.responseBody?.accessToken || null, baseUrl };
 }
 
+// ── Admin: user management ─────────────────────────────────────────────────
+
+// List every account with optional role/status/active filters and free-text
+// search. Returns the pending count too (for the moderation badge).
+app.get('/api/admin/users', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const { role, status, active, q } = req.query;
+    const filter = {};
+    if (role && role !== 'all') filter.role = role;
+    if (status && status !== 'all') filter.status = status;
+    if (active !== undefined && active !== '') filter.active = active === 'true';
+    if (q && q.trim()) {
+      const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [{ name: rx }, { email: rx }, { company: rx }, { hubRef: rx }];
+    }
+    const users = await User.find(filter)
+      .select('-password -e2ePriv')
+      .sort({ createdAt: -1 });
+    const pendingCount = await User.countDocuments({ status: 'pending' });
+    res.json({ users: users.map(publicUser), pendingCount });
+  } catch (error) {
+    console.error('Admin users list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: approve, reject, deactivate or reactivate an account.
+app.patch('/api/admin/users/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const { status, active } = req.body || {};
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (String(user._id) === String(req.user.userId)) {
+      return res.status(400).json({ message: 'You cannot change your own account' });
+    }
+    if (status !== undefined) {
+      if (!['pending', 'approved', 'rejected'].includes(status)) {
+        return res.status(400).json({ message: 'Invalid status' });
+      }
+      user.status = status;
+    }
+    if (active !== undefined) user.active = active === true;
+
+    await user.save();
+
+    // Once an org is approved and active, welcome it as a landing partner.
+    if (user.status === 'approved' && user.active !== false) {
+      await syncSitePartner(user);
+    }
+    res.json({ user: publicUser(user) });
+  } catch (error) {
+    console.error('Admin user update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: permanently delete an account (admin accounts are protected).
+app.delete('/api/admin/users/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.role === 'admin') {
+      return res.status(400).json({ message: 'Admin accounts cannot be deleted' });
+    }
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: 'User deleted' });
+  } catch (error) {
+    console.error('Admin user delete error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Interviews (admin video-call onboarding) ────────────────────────────────
+
+function publicInterview(i) {
+  return {
+    id: i._id,
+    userId: i.userId,
+    proposedDate: i.proposedDate,
+    proposedTime: i.proposedTime,
+    notes: i.notes,
+    status: i.status,
+    adminNotes: i.adminNotes,
+    scheduledAt: i.scheduledAt,
+    createdAt: i.createdAt,
+  };
+}
+
+// Both the interview owner and any admin may operate on an interview.
+function interviewAccessOk(req, interview) {
+  return String(interview.userId) === String(req.user.userId) || req.user.role === 'admin';
+}
+
+// User: propose a date/time for the admin video interview.
+app.post('/api/interviews/propose', authenticateToken, async (req, res) => {
+  try {
+    const { proposedDate, proposedTime, notes } = req.body || {};
+    if (!proposedDate) {
+      return res.status(400).json({ message: 'Please pick a date for the interview.' });
+    }
+    // No pending/proposed interview may pile up — cancel previous unfinished ones.
+    await Interview.updateMany(
+      { userId: req.user.userId, status: { $in: ['proposed', 'rejected'] } },
+      { $set: { status: 'cancelled' } }
+    );
+
+    const interview = await Interview.create({
+      userId: req.user.userId,
+      proposedDate: new Date(proposedDate),
+      proposedTime: (proposedTime || '').toString().slice(0, 5),
+      notes: (notes || '').toString().slice(0, 500),
+      status: 'proposed',
+    });
+    res.status(201).json({ interview: publicInterview(interview) });
+  } catch (error) {
+    console.error('Interview propose error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// User: their interview (latest one, plus any history).
+app.get('/api/interviews/me', authenticateToken, async (req, res) => {
+  try {
+    const interviews = await Interview.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+    res.json({ interviews: interviews.map(publicInterview) });
+  } catch (error) {
+    console.error('Interview me error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: all interviews (filterable by status).
+app.get('/api/admin/interviews', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const { status } = req.query;
+    const filter = {};
+    if (status && status !== 'all') filter.status = status;
+    const interviews = await Interview.find(filter).sort({ createdAt: -1 });
+    const users = await User.find({
+      _id: { $in: interviews.map((i) => i.userId) },
+    }).select('-password -e2ePriv');
+    const userMap = new Map(users.map((u) => [String(u._id), publicUser(u)]));
+    const pendingCount = await Interview.countDocuments({ status: 'proposed' });
+    res.json({
+      interviews: interviews.map((i) => ({
+        ...publicInterview(i),
+        user: userMap.get(String(i.userId)) || null,
+      })),
+      pendingCount,
+    });
+  } catch (error) {
+    console.error('Admin interviews error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: accept/reject/cancel an interview, or mark it completed (which also
+// unlocks the user's dashboard).
+app.patch('/api/admin/interviews/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+
+    const { status, adminNotes } = req.body || {};
+    if (!['proposed', 'accepted', 'rejected', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({ message: 'Invalid status' });
+    }
+
+    interview.status = status;
+    if (status === 'accepted') interview.scheduledAt = new Date();
+    if (adminNotes !== undefined) interview.adminNotes = (adminNotes || '').toString().slice(0, 500);
+    await interview.save();
+
+    if (status === 'completed') {
+      await User.updateOne({ _id: interview.userId }, { $set: { interviewDone: true } });
+    }
+
+    res.json({ interview: publicInterview(interview) });
+  } catch (error) {
+    console.error('Admin interview update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// WebRTC signaling — the two sides of an accepted interview exchange their
+// offer/answer SDP + ICE candidates by polling these endpoints. Both sides
+// must be the interview owner or an admin; signaling only opens once the
+// interview has been accepted by the admin.
+app.get('/api/interviews/:id/signal', authenticateToken, async (req, res) => {
+  try {
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+    if (!interviewAccessOk(req, interview)) return res.status(403).json({ message: 'Not allowed' });
+    if (interview.status === 'rejected' || interview.status === 'cancelled') {
+      return res.status(400).json({ message: 'This interview is not active' });
+    }
+    const signals = await Signal.find({ interviewId: interview._id }).sort({ createdAt: 1 });
+    const ices = await IceCandidate.find({ interviewId: interview._id }).sort({ createdAt: 1 });
+    res.json({
+      offer: signals.find((s) => s.kind === 'offer')?.sdp || '',
+      answer: signals.find((s) => s.kind === 'answer')?.sdp || '',
+      offerCandidates: ices.filter((c) => c.kind === 'offer').map((c) => c.candidate),
+      answerCandidates: ices.filter((c) => c.kind === 'answer').map((c) => c.candidate),
+    });
+  } catch (error) {
+    console.error('Signal get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/interviews/:id/signal', authenticateToken, async (req, res) => {
+  try {
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+    if (!interviewAccessOk(req, interview)) return res.status(403).json({ message: 'Not allowed' });
+    if (interview.status === 'rejected' || interview.status === 'cancelled') {
+      return res.status(400).json({ message: 'This interview is not active' });
+    }
+    const { kind, sdp } = req.body || {};
+    if (!['offer', 'answer'].includes(kind) || !sdp) {
+      return res.status(400).json({ message: 'Missing signal payload' });
+    }
+    // Keep one offer + one answer per interview.
+    await Signal.deleteMany({ interviewId: interview._id, kind });
+    const sig = await Signal.create({ interviewId: interview._id, kind, sdp });
+    res.status(201).json({ signal: { id: sig._id, kind: sig.kind } });
+  } catch (error) {
+    console.error('Signal post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/interviews/:id/ice', authenticateToken, async (req, res) => {
+  try {
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+    if (!interviewAccessOk(req, interview)) return res.status(403).json({ message: 'Not allowed' });
+    const ices = await IceCandidate.find({ interviewId: interview._id }).sort({ createdAt: 1 });
+    res.json({
+      offerCandidates: ices.filter((c) => c.kind === 'offer').map((c) => c.candidate),
+      answerCandidates: ices.filter((c) => c.kind === 'answer').map((c) => c.candidate),
+    });
+  } catch (error) {
+    console.error('Ice get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/interviews/:id/ice', authenticateToken, async (req, res) => {
+  try {
+    const interview = await Interview.findById(req.params.id);
+    if (!interview) return res.status(404).json({ message: 'Interview not found' });
+    if (!interviewAccessOk(req, interview)) return res.status(403).json({ message: 'Not allowed' });
+    const { kind, candidate } = req.body || {};
+    if (!['offer', 'answer'].includes(kind) || !candidate) {
+      return res.status(400).json({ message: 'Missing ICE candidate' });
+    }
+    if (candidate.length > 20000) return res.status(413).json({ message: 'Candidate too large' });
+    await IceCandidate.create({ interviewId: interview._id, kind, candidate });
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    console.error('Ice post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Employer "Request Talent" + matching ────────────────────────────────────
+
+function normalizeTag(t) {
+  return String(t || '').toLowerCase().trim().replace(/[^a-z0-9+#.-]/g, ' ');
+}
+
+// Score every approved, active seeker against a talent request and rank them.
+// Match % = skills (50%) + tools (30%) + role fit (20%).
+async function matchTalentRequest(tr) {
+  const reqSkills = (tr.skills || []).map(normalizeTag).filter(Boolean);
+  const reqTools = (tr.tools || []).map(normalizeTag).filter(Boolean);
+  const skillSet = new Set(reqSkills);
+  const toolSet = new Set(reqTools);
+  const roleTag = normalizeTag(tr.role || '');
+  const roleWords = roleTag.split(' ').filter((w) => w.length > 2);
+
+  const seekers = await User.find({ role: 'seeker', status: 'approved', active: true }).select('-password -e2ePriv');
+  const results = seekers.map((s) => {
+    const profileSkills = (s.skills || []).map(normalizeTag).filter(Boolean);
+    const profileSet = new Set(profileSkills);
+    const titleTag = normalizeTag(s.title || '');
+    const summaryTag = normalizeTag(s.summary || '');
+
+    // Skills — exact or fuzzy substring match.
+    let skillHits = 0;
+    for (const rs of skillSet) {
+      if (profileSet.has(rs)) skillHits += 1;
+      else if (profileSkills.some((p) => p.includes(rs) || rs.includes(p))) skillHits += 0.75;
+      else if (titleTag.includes(rs)) skillHits += 0.5;
+    }
+    const skillScore = skillSet.size ? skillHits / skillSet.size : 0;
+
+    // Tools — exact, fuzzy, or present in the headline/title.
+    let toolHits = 0;
+    for (const rt of toolSet) {
+      if (profileSet.has(rt)) toolHits += 1;
+      else if (profileSkills.some((p) => p.includes(rt) || rt.includes(p))) toolHits += 0.75;
+      else if (titleTag.includes(rt) || summaryTag.includes(rt)) toolHits += 0.5;
+    }
+    const toolScore = toolSet.size ? toolHits / toolSet.size : 0;
+
+    // Role fit — headline matches the requested role title / keywords.
+    let roleScore = 0;
+    if (roleTag && roleWords.length) {
+      if (titleTag.includes(roleTag)) roleScore = 1;
+      else if (roleWords.some((w) => titleTag.includes(w) || summaryTag.includes(w))) roleScore = 0.8;
+      else if (roleWords.some((w) => summaryTag.includes(w))) roleScore = 0.6;
+    } else {
+      roleScore = 0.5;
+    }
+
+    const match = Math.round(skillScore * 50 + toolScore * 30 + roleScore * 20);
+
+    const matches = {
+      skills: skillSet.size ? Math.min(1, skillHits / skillSet.size) : 0,
+      tools: toolSet.size ? Math.min(1, toolHits / toolSet.size) : 0,
+      role: roleScore >= 0.8 ? 1 : roleScore >= 0.5 ? 0.5 : 0,
+    };
+
+    return {
+      seeker: lockContacts(publicUser(s)),
+      match,
+      skillMatches: Math.min(skillSet.size, Math.round(skillHits)),
+      skillCount: reqSkills.length,
+      toolMatches: Math.min(toolSet.size, Math.round(toolHits)),
+      toolCount: reqTools.length,
+      breakdown: matches,
+    };
+  });
+
+  results.sort((a, b) => b.match - a.match);
+  return results;
+}
+
+// Employer: create a talent request.
+app.post('/api/talent-requests', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Only employer accounts can request talent' });
+    const { role, title, location, type, description, skills, tools, requirements, budget } = req.body || {};
+    if (!role || !String(role).trim()) {
+      return res.status(400).json({ message: 'Role is required' });
+    }
+    const tr = await TalentRequest.create({
+      employerId: req.user.userId,
+      role: String(role).trim(),
+      title: String(title || '').trim(),
+      location: String(location || '').trim(),
+      type: String(type || 'Full-time').trim(),
+      description: String(description || '').trim(),
+      skills: Array.isArray(skills) ? skills.map((x) => String(x).trim()).filter(Boolean) : [],
+      tools: Array.isArray(tools) ? tools.map((x) => String(x).trim()).filter(Boolean) : [],
+      requirements: Array.isArray(requirements) ? requirements.map((x) => String(x).trim()).filter(Boolean) : [],
+      budget: String(budget || '').trim(),
+      status: 'open',
+      results: [],
+    });
+    res.status(201).json({ request: tr });
+  } catch (error) {
+    console.error('Talent request create error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: list their talent requests (with a cached match summary).
+app.get('/api/talent-requests', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Only employer accounts can request talent' });
+    const requests = await TalentRequest.find({ employerId: req.user.userId }).sort({ createdAt: -1 });
+    const counts = requests.map((tr) => ({
+      id: tr._id,
+      ...(Array.isArray(tr.results) && tr.results.length
+        ? { topMatch: tr.results[0].match, matchedCount: tr.results.length }
+        : { topMatch: null, matchedCount: 0 }),
+    }));
+    res.json({ requests, summaries: counts });
+  } catch (error) {
+    console.error('Talent request list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: view one request plus its matches.
+app.get('/api/talent-requests/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Only employer accounts can request talent' });
+    const tr = await TalentRequest.findById(req.params.id);
+    if (!tr || String(tr.employerId) !== String(req.user.userId)) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+    res.json({ request: tr });
+  } catch (error) {
+    console.error('Talent request get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: run (or refresh) the matching for a request.
+app.post('/api/talent-requests/:id/match', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Only employer accounts can request talent' });
+    const tr = await TalentRequest.findById(req.params.id);
+    if (!tr || String(tr.employerId) !== String(req.user.userId)) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+    const results = await matchTalentRequest(tr);
+    tr.results = results;
+    await tr.save();
+    res.json({ request: tr, results });
+  } catch (error) {
+    console.error('Talent request match error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: close / reopen a request.
+app.patch('/api/talent-requests/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Only employer accounts can request talent' });
+    const tr = await TalentRequest.findById(req.params.id);
+    if (!tr || String(tr.employerId) !== String(req.user.userId)) {
+      return res.status(404).json({ message: 'Request not found' });
+    }
+    if (req.body.status && ['open', 'closed'].includes(req.body.status)) tr.status = req.body.status;
+    await tr.save();
+    res.json({ request: tr });
+  } catch (error) {
+    console.error('Talent request update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ── Admin: Monnify config ─────────────────────────────────────────────────
 
 app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
@@ -1805,6 +2356,16 @@ app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
 app.get('/', (req, res) => {
   res.json({ message: 'TalentriX API' });
 });
+
+// Serve the built frontend (production) with an SPA fallback so direct URL
+// entry (e.g. /dashboard/seeker) works even when served from this server.
+const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');
+if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
+  app.use(express.static(frontendDist));
+  app.get(/^(?!\/api(?:\/|$)).*/, (req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // Start server
 app.listen(PORT, () => {

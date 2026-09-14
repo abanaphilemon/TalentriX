@@ -168,6 +168,13 @@ export function AuthProvider({ children }) {
     setRole(null);
   }, []);
 
+  // Merge latest server state into the logged-in user (e.g. after onboarding
+  // completes so routing knows onboardingDone is now true).
+  const updateUser = useCallback((patch) => {
+    setUser((u) => (u ? { ...u, ...patch } : u));
+    return patch;
+  }, []);
+
   // Admin session is stored under separate keys so the admin panel and the
   // public site never share auth state across tabs.
   const adminLogin = useCallback(async ({ email, password }) => {
@@ -216,6 +223,7 @@ export function AuthProvider({ children }) {
     loginWithEmail,
     registerWithEmail,
     signOut,
+    updateUser,
     adminLogin,
     adminSignOut,
   };

@@ -19,7 +19,7 @@ import { useContent } from '../context/ContentContext.jsx';
 export default function RegisterPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { selectRole, registerWithEmail } = useAuth();
+  const { user, selectRole, registerWithEmail, signOut } = useAuth();
 
   const ref = searchParams.get('ref') || '';
   const [showPw, setShowPw] = useState(false);
@@ -32,9 +32,9 @@ export default function RegisterPage() {
     formState: { errors, isSubmitting },
   } = useForm();
 
-  // Lock role to seeker for hub-link registrations
+  // Lock role to seeker for hub-link registrations, but only if not already logged in
   useEffect(() => {
-    if (ref) selectRole('seeker');
+    if (ref && !user) selectRole('seeker');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref]);
 
@@ -50,7 +50,7 @@ export default function RegisterPage() {
       return;
     }
     setSuccess(true);
-    setTimeout(() => navigate('/dashboard/seeker', { replace: true }), 800);
+    setTimeout(() => navigate('/onboarding', { replace: true }), 800);
   };
 
   const inputCls = (err) =>
@@ -68,7 +68,7 @@ export default function RegisterPage() {
             <CheckCircle2 className="w-8 h-8 text-green-600" />
           </div>
           <h1 className="font-display text-2xl font-bold text-secondary">Account created!</h1>
-          <p className="text-secondary/60 mt-2">Taking you to your dashboard…</p>
+          <p className="text-secondary/60 mt-2">Setting up your portfolio…</p>
         </div>
       </AuthShell>
     );
@@ -76,6 +76,20 @@ export default function RegisterPage() {
 
   return (
     <AuthShell>
+      {/* Logged-in notice */}
+      {user && (
+        <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm mb-6">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            You are already logged in as <strong>{user.name || user.email}</strong>. You can view this page but will need to{' '}
+            <button onClick={() => { signOut(); navigate('/', { replace: true }); }} className="underline font-semibold hover:text-amber-900">
+              log out
+            </button>{' '}
+            first to create a new account.
+          </span>
+        </div>
+      )}
+
       {/* Hub-link banner */}
       {ref && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-primary/15 border border-primary/30 text-secondary text-sm mb-6">
