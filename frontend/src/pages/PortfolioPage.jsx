@@ -28,7 +28,7 @@ import {
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat from '../components/SecureChat.jsx';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const avatarFor = (name = '') =>
   `https://ui-avatars.com/api/?name=${encodeURIComponent(name || 'Seeker')}&background=F5E1A8&color=141E2E&size=128`;

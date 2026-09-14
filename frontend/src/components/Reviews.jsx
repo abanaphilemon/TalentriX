@@ -4,7 +4,7 @@ import { useInView } from 'react-intersection-observer';
 import { Star, Quote, Send, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useContent } from '../context/ContentContext.jsx';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 // Single approved review card
 const ReviewCard = ({ review, index, inView }) => (

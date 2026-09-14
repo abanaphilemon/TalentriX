@@ -8,7 +8,7 @@ import {
   images as defaultImages,
 } from '../data/content.js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 // Fully-populated default content so the site works even if the DB is empty.
 const defaults = {

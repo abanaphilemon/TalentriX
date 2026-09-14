@@ -436,7 +436,7 @@ export default function EmployerRequestTalent() {
   );
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 function MatchCard({ result, rank }) {
   const s = result.seeker;

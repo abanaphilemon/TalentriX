@@ -31,7 +31,7 @@ import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import EmployerRequestTalent from './EmployerRequestTalent.jsx';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 // Small reusable input field
 function Field({ label, icon: Icon, children, className = '' }) {

@@ -34,7 +34,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 const ADMIN_TOKEN_KEY = 'tbai.adminToken';
 
 // Navigation: grouped + searchable.

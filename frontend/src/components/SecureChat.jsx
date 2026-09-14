@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { ensureKeys, decryptMessage, encryptMessage, formatWhen } from '../lib/e2e.js';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const inputCls =
   'w-full px-4 py-2.5 rounded-2xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all text-sm';
