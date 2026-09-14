@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 const corsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',')
-  : ['http://localhost:5173', 'http://localhost:5174'];
+  : ['https://talentri-x.vercel.app', 'https://talentri-x.vercel.app'];
 app.use(cors({
   origin: corsOrigins,
   credentials: true,
