@@ -7,8 +7,74 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
 
+const nodemailer = require('nodemailer');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// ── Email (SMTP) ────────────────────────────────────────────────────────────
+// Everything degrades gracefully: if SMTP credentials aren't configured the
+// reminders are logged to the console so development still works.
+const SMTP_HOST = process.env.SMTP_HOST;
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+const MAIL_FROM = process.env.SMTP_FROM || (SMTP_USER ? `TalentriX <${SMTP_USER}>` : 'TalentriX <noreply@talentri-x.vercel.app>');
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://talentri-x.vercel.app';
+
+let transporter = null;
+if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+}
+
+async function sendMail({ to, subject, html }) {
+  if (!to) return false;
+  try {
+    if (!transporter) {
+      console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
+      return false;
+    }
+    await transporter.sendMail({ from: MAIL_FROM, to, subject, html });
+    console.log(`[email:sent] to=${to} subject="${subject}"`);
+    return true;
+  } catch (error) {
+    console.error('[email:error]', error.message);
+    return false;
+  }
+}
+
+// ── Interview scheduling calendar ───────────────────────────────────────────
+// All interview times are Nigeria wall-clock (Africa/Lagos, UTC+1). Nigeria
+// does not observe DST, so wall time → absolute instant is a fixed offset.
+const LAGOS_OFFSET_MS = 60 * 60 * 1000; // UTC+1
+const INTERVIEW_BLOCK_HOURS = 3; // each booking takes its slot + the next 3h
+
+// 'YYYY-MM-DD' + 'HH:MM' (Nigeria wall time) → absolute Date.
+function nigeriaWallToUtc(dateStr, timeStr) {
+  const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const [hh, mm] = String(timeStr).split(':').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh || 0, mm || 0) - LAGOS_OFFSET_MS);
+}
+
+// Rebuild the absolute start instant for a stored interview (stored calendar
+// day is kept as UTC midnight of the Nigeria date + separate "HH:MM" string).
+function interviewStart(iv) {
+  const d = iv.proposedDate instanceof Date ? iv.proposedDate : new Date(iv.proposedDate);
+  const dateStr = [
+    d.getUTCFullYear(),
+    String(d.getUTCMonth() + 1).padStart(2, '0'),
+    String(d.getUTCDate()).padStart(2, '0'),
+  ].join('-');
+  return nigeriaWallToUtc(dateStr, iv.proposedTime);
+}
+function interviewEnd(iv) {
+  return new Date(interviewStart(iv).getTime() + INTERVIEW_BLOCK_HOURS * 3600 * 1000);
+}
 
 // Middleware
 const corsOrigins = process.env.CORS_ORIGINS
@@ -31,6 +97,12 @@ mongoose.connect(uri)
   } catch (e) {
     console.error('Seed error:', e.message);
   }
+  // Interview housekeeping: expire unapproved times that have passed and send
+  // the 1-hour reminders. Runs every minute so no background job is required.
+  setInterval(() => {
+    interviewHousekeeping();
+  }, 60 * 1000);
+  interviewHousekeeping();
 })
 .catch(err => console.error('MongoDB connection error:', err));
 
@@ -376,9 +448,14 @@ const Interview = mongoose.model('Interview', new mongoose.Schema({
   proposedDate: { type: Date, required: true },
   proposedTime: { type: String, default: '' },
   notes: { type: String, default: '' },
-  status: { type: String, enum: ['proposed', 'accepted', 'rejected', 'completed', 'cancelled'], default: 'proposed' },
+  status: { type: String, enum: ['proposed', 'accepted', 'rejected', 'completed', 'cancelled', 'expired'], default: 'proposed' },
   adminNotes: { type: String, default: '' },
   scheduledAt: { type: Date, default: Date.now },
+  // Absolute Nigeria (Lagos) instants for the booked 3-hour block — enables
+  // overlap checks, expiry sweeps and reminders without timezone math on read.
+  startAt: { type: Date },
+  endAt: { type: Date },
+  reminderSentAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now },
 }));
 
@@ -586,6 +663,16 @@ async function seedSite() {
     { interviewDone: { $exists: false } },
     { $set: { interviewDone: true } }
   );
+
+  // Interviews created before the startAt/endAt fields (or stored as plain
+  // dates) get their 3-hour block rebuilt from the stored Nigeria wall time.
+  const legacyInterviews = await Interview.find({ startAt: { $exists: false } });
+  for (const iv of legacyInterviews) {
+    await Interview.updateOne(
+      { _id: iv._id },
+      { $set: { startAt: interviewStart(iv), endAt: interviewEnd(iv) } }
+    );
+  }
 
   let doc = await SiteContent.findOne({ key: 'landing' });
   if (!doc) {
@@ -1786,6 +1873,8 @@ function publicInterview(i) {
     status: i.status,
     adminNotes: i.adminNotes,
     scheduledAt: i.scheduledAt,
+    startAt: i.startAt,
+    endAt: i.endAt,
     createdAt: i.createdAt,
   };
 }
@@ -1795,26 +1884,182 @@ function interviewAccessOk(req, interview) {
   return String(interview.userId) === String(req.user.userId) || req.user.role === 'admin';
 }
 
-// User: propose a date/time for the admin video interview.
+// ── Interview email drafts ──────────────────────────────────────────────────
+function emailShell(title, body) {
+  return `<!doctype html><body style="margin:0;padding:0;background:#f6f5f2;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f5f2;padding:24px;">
+      <tr><td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;">
+          <tr><td style="padding:18px 24px;background:#f5c518;font-weight:bold;font-size:18px;color:#141921;">TalentriX</td></tr>
+          <tr><td style="padding:28px 24px">
+            <h1 style="margin:0 0 12px;font-size:20px;color:#141921;">${title}</h1>
+            ${body}
+          </td></tr>
+        </table>
+      </td></tr>
+    </table></body></html>`;
+}
+
+function bookingSummary(iv) {
+  const start = interviewStart(iv);
+  const when = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Lagos', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(start);
+  return `<p style="margin:0 0 18px;color:#4b5262;font-size:14px;line-height:1.6;background:#f6f5f2;border-radius:10px;padding:14px 16px;">
+    <strong style="display:block;color:#141921;font-size:15px;">${when} (Nigeria time)</strong>
+    <span style="display:block;margin-top:2px;">Booking window: 3 hours, from ${iv.proposedTime} WAT.</span>
+    ${iv.notes ? `<span style="display:block;margin-top:6px;font-style:italic;">Notes: ${iv.notes}</span>` : ''}
+  </p>`;
+}
+
+// ── Housekeeping: expire stale proposals + fire 1-hour reminders ──────────
+async function expireStaleProposals() {
+  const now = new Date();
+  const stale = await Interview.find({ status: 'proposed', startAt: { $lt: now } });
+  for (const iv of stale) {
+    const updated = await Interview.updateOne(
+      { _id: iv._id, status: 'proposed' },
+      { $set: { status: 'expired' } }
+    );
+    if (updated.modifiedCount === 0) continue; // another sweep already did it
+    const u = await User.findById(iv.userId);
+    if (u) {
+      void sendMail({
+        to: u.email,
+        subject: 'Your interview time passed — choose a new one',
+        html: emailShell('Your proposed interview time has passed', `
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${u.name || 'there'},</p>
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">The admin hasn't confirmed the slot below before it passed, so it has been released.</p>
+          ${bookingSummary(iv)}
+          <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Please log in and pick a new date and time so we can schedule your call.</p>
+          <a href="${FRONTEND_URL}/interview" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Pick a new time</a>`),
+      });
+    }
+  }
+}
+
+async function sendInterviewReminders() {
+  const now = new Date();
+  const inAnHour = new Date(now.getTime() + 60 * 60 * 1000);
+  const due = await Interview.find({
+    status: 'accepted',
+    startAt: { $gt: now, $lte: inAnHour },
+    reminderSentAt: null,
+  });
+  for (const iv of due) {
+    const u = await User.findById(iv.userId);
+    const admin = await User.findOne({ role: 'admin', active: true });
+    if (u) {
+      void sendMail({
+        to: u.email,
+        subject: 'Reminder: your interview starts in about an hour',
+        html: emailShell('Interview reminder', `
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${u.name || 'there'}, just a heads-up about your upcoming onboarding call:</p>
+          ${bookingSummary(iv)}
+          <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Join from your dashboard when it's time — make sure your camera and microphone are ready.</p>
+          <a href="${FRONTEND_URL}/interview" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open interview page</a>`),
+      });
+    }
+    if (admin) {
+      void sendMail({
+        to: admin.email,
+        subject: `Reminder: interview with ${u ? u.name : 'a user'} in about an hour`,
+        html: emailShell('Interview reminder — admin', `
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${admin.name || 'Admin'}, an onboarding call is coming up:</p>
+          ${bookingSummary(iv)}
+          ${u ? `<p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">User: <strong>${u.name}</strong> &lt;${u.email}&gt;</p>` : ''}
+          <a href="${FRONTEND_URL}/admin" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open admin panel</a>`),
+      });
+    }
+    await Interview.updateOne({ _id: iv._id }, { $set: { reminderSentAt: new Date() } });
+  }
+}
+
+async function interviewHousekeeping() {
+  try {
+    await expireStaleProposals();
+    await sendInterviewReminders();
+  } catch (error) {
+    console.error('Interview housekeeping error:', error.message);
+  }
+}
+
+// User: propose a date/time for the admin video interview (Nigeria/WAT time).
 app.post('/api/interviews/propose', authenticateToken, async (req, res) => {
   try {
     const { proposedDate, proposedTime, notes } = req.body || {};
-    if (!proposedDate) {
-      return res.status(400).json({ message: 'Please pick a date for the interview.' });
+    const dateStr = String(proposedDate || '').slice(0, 10);
+    const timeStr = String(proposedTime || '').toString().slice(0, 5);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return res.status(400).json({ message: 'Please pick a valid date for the interview.' });
     }
-    // No pending/proposed interview may pile up — cancel previous unfinished ones.
+    if (!/^(\d{2}):(\d{2})$/.test(timeStr)) {
+      return res.status(400).json({ message: 'Please pick a valid time for the interview.' });
+    }
+
+    const start = nigeriaWallToUtc(dateStr, timeStr);
+    const end = new Date(start.getTime() + INTERVIEW_BLOCK_HOURS * 3600 * 1000);
+    if (Number.isNaN(start.getTime()) || start <= new Date()) {
+      return res.status(400).json({ message: 'That time has already passed. Please pick a future time.' });
+    }
+
+    // Rescheduling: cancel the user's own previous unfinished booking first.
     await Interview.updateMany(
-      { userId: req.user.userId, status: { $in: ['proposed', 'rejected'] } },
+      { userId: req.user.userId, status: { $in: ['proposed', 'accepted', 'rejected'] } },
       { $set: { status: 'cancelled' } }
     );
 
+    // Shared calendar: every booking takes a 3-hour window, so another user's
+    // proposal/accepted call that overlaps this slot makes it unavailable.
+    const clash = await Interview.findOne({
+      userId: { $ne: req.user.userId },
+      status: { $in: ['proposed', 'accepted'] },
+      startAt: { $lt: end },
+      endAt: { $gt: start },
+    });
+    if (clash) {
+      return res.status(400).json({
+        message: 'That time falls inside a 3-hour block that is already booked. Please pick a different time.',
+      });
+    }
+
     const interview = await Interview.create({
       userId: req.user.userId,
-      proposedDate: new Date(proposedDate),
-      proposedTime: (proposedTime || '').toString().slice(0, 5),
+      proposedDate: new Date(`${dateStr}T00:00:00Z`),
+      proposedTime: timeStr,
       notes: (notes || '').toString().slice(0, 500),
       status: 'proposed',
+      startAt: start,
+      endAt: end,
     });
+
+    // Notify everyone.
+    const user = await User.findById(req.user.userId);
+    const admin = await User.findOne({ role: 'admin', active: true });
+    if (user) {
+      void sendMail({
+        to: user.email,
+        subject: 'Your interview time was proposed',
+        html: emailShell('We received your interview time', `
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${user.name || 'there'}, your proposed onboarding call is:</p>
+          ${bookingSummary(interview)}
+          <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">The admin will confirm it. We'll email you the moment it's approved, and again an hour before the call.</p>
+          <a href="${FRONTEND_URL}/interview" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">View your interview page</a>`),
+      });
+    }
+    if (admin) {
+      void sendMail({
+        to: admin.email,
+        subject: `New interview booking — ${user ? user.name : 'a user'}`,
+        html: emailShell('New onboarding interview to confirm', `
+          <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${admin.name || 'Admin'}, a new call has been proposed:</p>
+          ${bookingSummary(interview)}
+          ${user ? `<p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">User: <strong>${user.name}</strong> &lt;${user.email}&gt;</p>` : ''}
+          <a href="${FRONTEND_URL}/admin" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open admin panel to confirm</a>`),
+      });
+    }
+
     res.status(201).json({ interview: publicInterview(interview) });
   } catch (error) {
     console.error('Interview propose error:', error);
@@ -1825,6 +2070,8 @@ app.post('/api/interviews/propose', authenticateToken, async (req, res) => {
 // User: their interview (latest one, plus any history).
 app.get('/api/interviews/me', authenticateToken, async (req, res) => {
   try {
+    // Expire unapproved times that have passed so the user sees them as such.
+    await expireStaleProposals();
     const interviews = await Interview.find({ userId: req.user.userId }).sort({ createdAt: -1 });
     res.json({ interviews: interviews.map(publicInterview) });
   } catch (error) {
@@ -1833,10 +2080,35 @@ app.get('/api/interviews/me', authenticateToken, async (req, res) => {
   }
 });
 
+// User: shared calendar of occupied 3-hour blocks (all users + the admin).
+app.get('/api/interviews/slots', authenticateToken, async (req, res) => {
+  try {
+    await expireStaleProposals();
+    const now = new Date();
+    const booked = await Interview.find({
+      status: { $in: ['proposed', 'accepted'] },
+      startAt: { $gte: now },
+    });
+    res.json({
+      slots: booked.map((i) => ({
+        id: i._id,
+        userId: i.userId,
+        start: i.startAt,
+        end: i.endAt,
+        status: i.status,
+      })),
+    });
+  } catch (error) {
+    console.error('Interview slots error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Admin: all interviews (filterable by status).
 app.get('/api/admin/interviews', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    await expireStaleProposals();
     const { status } = req.query;
     const filter = {};
     if (status && status !== 'all') filter.status = status;
@@ -1879,6 +2151,32 @@ app.patch('/api/admin/interviews/:id', authenticateToken, async (req, res) => {
 
     if (status === 'completed') {
       await User.updateOne({ _id: interview.userId }, { $set: { interviewDone: true } });
+    }
+
+    // Email the user about the decision (only when it changes the plan).
+    if (status === 'accepted' || status === 'rejected') {
+      const user = await User.findById(interview.userId);
+      if (user) {
+        const confirmed = status === 'accepted';
+        void sendMail({
+          to: user.email,
+          subject: confirmed ? 'Your interview is confirmed 🎉' : 'Interview time not confirmed — please pick another',
+          html: emailShell(
+            confirmed ? 'Your interview is confirmed' : 'Your proposed time wasn\u2019t confirmed',
+            confirmed
+              ? `
+                <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${user.name || 'there'}, great news — your onboarding call is booked:</p>
+                ${bookingSummary(interview)}
+                <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Join from your interview page when it's time. You'll also get a reminder an hour before.</p>
+                <a href="${FRONTEND_URL}/interview" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open interview page</a>`
+              : `
+                <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${user.name || 'there'}, the admin couldn't confirm this slot:</p>
+                ${bookingSummary(interview)}
+                <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Please pick another date and time so we can get your call scheduled.</p>
+                <a href="${FRONTEND_URL}/interview" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Pick a new time</a>`
+          ),
+        });
+      }
     }
 
     res.json({ interview: publicInterview(interview) });
@@ -2161,6 +2459,47 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
     res.json({ message: 'Config saved' });
   } catch (error) {
     console.error('Config set error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: reset own login details (name, email, password). The current password
+// is always required so a leaked admin token can't silently hijack the account.
+app.put('/api/admin/me/credentials', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const { currentPassword, newPassword, newEmail, name } = req.body || {};
+    const admin = await User.findById(req.user.userId);
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+    const ok = await bcrypt.compare(String(currentPassword || ''), admin.password);
+    if (!ok) return res.status(400).json({ message: 'Current password is incorrect' });
+
+    if (newPassword !== undefined && newPassword !== '') {
+      if (String(newPassword).length < 6) {
+        return res.status(400).json({ message: 'New password must be at least 6 characters' });
+      }
+      admin.password = await bcrypt.hash(String(newPassword), 10);
+    }
+
+    if (newEmail !== undefined && String(newEmail || '').trim()) {
+      const cleanEmail = String(newEmail).trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        return res.status(400).json({ message: 'Please provide a valid email address' });
+      }
+      const taken = await User.findOne({ email: cleanEmail, _id: { $ne: admin._id } });
+      if (taken) return res.status(400).json({ message: 'That email is already in use by another account' });
+      admin.email = cleanEmail;
+    }
+
+    if (name !== undefined && String(name || '').trim()) {
+      admin.name = String(name).trim();
+    }
+
+    await admin.save();
+    res.json({ user: publicUser(admin), message: 'Login details updated' });
+  } catch (error) {
+    console.error('Admin credentials error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

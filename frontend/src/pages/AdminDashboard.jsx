@@ -98,6 +98,13 @@ const SECTION_GROUPS = [
       { id: 'payments', label: 'Monnify Config', desc: 'API keys, contract code, and chat pricing.', special: 'payments' },
     ],
   },
+  {
+    id: 'account',
+    label: 'Account',
+    items: [
+      { id: 'account', label: 'Admin Login Details', desc: 'Reset your own name, email and password.', special: 'account' },
+    ],
+  },
 ];
 const ALL_SECTIONS = SECTION_GROUPS.flatMap((g) => g.items);
 const ARRAY_SECTIONS = new Set(['heroStats', 'navLinks', 'features', 'collaborators']);
@@ -279,6 +286,106 @@ function PaymentsConfig({ token }) {
         {msg && <span className="text-xs text-emerald-700 font-semibold">{msg}</span>}
       </div>
     </div>
+  );
+}
+
+function AdminSettings({ adminUser, token }) {
+  const [name, setName] = useState(adminUser?.name || '');
+  const [email, setEmail] = useState(adminUser?.email || '');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null); // { type: 'ok'|'err', text }
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setMsg(null);
+    if (newPassword && newPassword.length < 6) {
+      return setMsg({ type: 'err', text: 'New password must be at least 6 characters.' });
+    }
+    if (newPassword && newPassword !== confirmPassword) {
+      return setMsg({ type: 'err', text: 'New password confirmation does not match.' });
+    }
+    if (!currentPassword) {
+      return setMsg({ type: 'err', text: 'Enter your current password to confirm the change.' });
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/me/credentials`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword: newPassword || undefined,
+          newEmail: email !== adminUser?.email ? email : undefined,
+          name: name !== adminUser?.name ? name : undefined,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.message || 'Could not update login details');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setMsg({ type: 'ok', text: 'Login details updated. Use the new email/password next time you sign in.' });
+    } catch (err) {
+      setMsg({ type: 'err', text: err.message || 'Could not connect to server.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="max-w-xl space-y-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Key className="w-4 h-4 text-primary" />
+        <h3 className="font-display font-bold text-secondary">Admin login details</h3>
+      </div>
+      <p className="text-xs text-secondary/50 -mt-3">
+        Update the email and/or password you use to sign in to this panel. Your current password is required to confirm.
+      </p>
+
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Full name</label>
+        <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+      </div>
+      <div>
+        <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Email</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+      </div>
+
+      <div className="pt-2 border-t border-secondary/10 grid sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Current password</label>
+          <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className={inputCls} autoComplete="current-password" />
+        </div>
+        <div />
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">New password</label>
+          <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={inputCls} placeholder="Leave blank to keep" autoComplete="new-password" />
+        </div>
+        <div>
+          <label className="block text-xs font-bold uppercase tracking-widest text-secondary/50 mb-1.5">Confirm new password</label>
+          <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className={inputCls} placeholder="Repeat new password" autoComplete="new-password" />
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`flex items-center gap-2 p-3 rounded-xl border text-sm ${msg.type === 'ok' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {msg.type === 'ok' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          {msg.text}
+        </div>
+      )}
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+      >
+        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+        Update login details
+      </button>
+    </form>
   );
 }
 
@@ -651,7 +758,7 @@ export default function AdminDashboard() {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (dirty && section !== 'reviews' && section !== 'users' && section !== 'interviews' && section !== 'payments' && !saving) save();
+        if (dirty && section !== 'reviews' && section !== 'users' && section !== 'interviews' && section !== 'payments' && section !== 'account' && !saving) save();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -786,7 +893,7 @@ export default function AdminDashboard() {
                 <h2 className="font-display text-xl font-bold text-secondary">{activeMeta?.label}</h2>
                 {activeMeta?.desc && <p className="text-sm text-secondary/60 mt-0.5">{activeMeta.desc}</p>}
               </div>
-              {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && (
+              {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
                 <div className="flex gap-2">
                   <button
                     onClick={() => setForm(current !== undefined ? clone(current) : {})}
@@ -814,7 +921,7 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && (
+            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
               <div className="mb-5 flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 Unsaved changes to this section.
@@ -838,7 +945,11 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {section === 'payments' ? (
+            {section === 'account' ? (
+              <EditorBoundary>
+                <AdminSettings adminUser={user} token={token} />
+              </EditorBoundary>
+            ) : section === 'payments' ? (
               <EditorBoundary>
                 <PaymentsConfig token={token} />
               </EditorBoundary>
@@ -900,7 +1011,7 @@ export default function AdminDashboard() {
             )}
 
             {/* Danger zone: reset everything */}
-            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && (
+            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
               <div className="mt-10 pt-6 border-t border-secondary/10 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-secondary">Reset all content</div>
@@ -1378,6 +1489,7 @@ const INT_STATUS_BADGE = {
   rejected: 'bg-red-100 text-red-700',
   completed: 'bg-emerald-100 text-emerald-700',
   cancelled: 'bg-secondary/10 text-secondary/50',
+  expired: 'bg-red-100 text-red-700',
 };
 
 function InterviewsManager({ interviews, loading, statusFilter, setStatusFilter, onUpdate, onComplete }) {
@@ -1385,7 +1497,7 @@ function InterviewsManager({ interviews, loading, statusFilter, setStatusFilter,
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
         <div className="flex gap-1 bg-secondary/5 p-1 rounded-xl w-fit">
-          {['all', 'proposed', 'accepted', 'completed'].map((s) => (
+          {['all', 'proposed', 'accepted', 'completed', 'expired'].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
