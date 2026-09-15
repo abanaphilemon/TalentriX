@@ -1226,7 +1226,7 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     if (req.user.role !== 'employer') {
       return res.status(403).json({ message: 'Only employer accounts can view seekers' });
     }
-    const filter = { role: 'seeker', status: 'approved', active: true };
+    const filter = { role: 'seeker', status: 'approved', active: true, interviewDone: true };
     if (req.query.source === 'hub') {
       filter.hubId = { $ne: null };
     }
@@ -2274,8 +2274,8 @@ function normalizeTag(t) {
   return String(t || '').toLowerCase().trim().replace(/[^a-z0-9+#.-]/g, ' ');
 }
 
-// Score every approved, active seeker against a talent request and rank them.
-// Match % = skills (50%) + tools (30%) + role fit (20%).
+// Score every approved, interviewed, active seeker against a talent request
+// and rank them. Match % = skills (50%) + tools (30%) + role fit (20%).
 async function matchTalentRequest(tr) {
   const reqSkills = (tr.skills || []).map(normalizeTag).filter(Boolean);
   const reqTools = (tr.tools || []).map(normalizeTag).filter(Boolean);
@@ -2284,7 +2284,7 @@ async function matchTalentRequest(tr) {
   const roleTag = normalizeTag(tr.role || '');
   const roleWords = roleTag.split(' ').filter((w) => w.length > 2);
 
-  const seekers = await User.find({ role: 'seeker', status: 'approved', active: true }).select('-password -e2ePriv');
+  const seekers = await User.find({ role: 'seeker', status: 'approved', active: true, interviewDone: true }).select('-password -e2ePriv');
   const results = seekers.map((s) => {
     const profileSkills = (s.skills || []).map(normalizeTag).filter(Boolean);
     const profileSet = new Set(profileSkills);

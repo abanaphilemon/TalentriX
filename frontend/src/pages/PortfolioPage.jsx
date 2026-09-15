@@ -23,7 +23,8 @@ import {
   Star,
   BadgeCheck,
   Lock,
-  MessageSquare,
+  CreditCard,
+  AlertTriangle,
 } from 'lucide-react';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat from '../components/SecureChat.jsx';
@@ -84,6 +85,13 @@ export default function PortfolioPage() {
   const [chatOpen, setChatOpen] = useState(false);
   const [me, setMe] = useState(null);
   const [notice, setNotice] = useState('');
+
+  // Payment gate — locked until the employer pays to unlock chat with this seeker.
+  const [payModal, setPayModal] = useState(false);
+  const [payLoading, setPayLoading] = useState(false);
+  const [payPrice, setPayPrice] = useState(null);
+  const [payMsg, setPayMsg] = useState('');
+  const [paid, setPaid] = useState(false);
   const token = typeof window !== 'undefined' ? localStorage.getItem('tbai.token') : null;
   const viewerRole = typeof window !== 'undefined' ? localStorage.getItem('tbai.role') : null;
 
@@ -106,7 +114,54 @@ export default function PortfolioPage() {
       setNotice('Only employers can open a secure chat with a job seeker.');
       return;
     }
+    // Employers must pay to unlock chat with each job seeker.
+    if (me?.role === 'employer' && String(me.id) !== String(id) && !paid) {
+      setPayMsg('');
+      setPayModal(true);
+      return;
+    }
     setChatOpen(true);
+  };
+
+  // Load price + unlock status for a logged-in employer viewing this seeker.
+  useEffect(() => {
+    if (!token || !me || me.role !== 'employer' || String(me.id) === String(id)) return;
+    fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setPayPrice(d))
+      .catch(() => {});
+    fetch(`${API_URL}/payment/check/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setPaid(!!d.paid))
+      .catch(() => {});
+  }, [token, me, id]);
+
+  const initiatePayment = async () => {
+    setPayLoading(true);
+    setPayMsg('');
+    try {
+      const res = await fetch(`${API_URL}/payment/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ seekerId: id }),
+      });
+      const d = await res.json();
+      if (d.paid) {
+        setPaid(true);
+        setPayModal(false);
+        setChatOpen(true);
+        return;
+      }
+      if (d.checkoutUrl) {
+        window.location.href = d.checkoutUrl;
+        return;
+      }
+      setPayMsg(d.detail || d.message || 'Could not start payment.');
+    } catch {
+      setPayMsg('Could not connect to the payment server.');
+    } finally {
+      setPayLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -208,12 +263,6 @@ export default function PortfolioPage() {
                 <FileText className="w-3.5 h-3.5" /> Download CV
               </a>
             )}
-            <button
-              onClick={startChat}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-primary text-black text-xs font-bold hover:brightness-105 hover:-translate-y-0.5 transition-all shadow-md shadow-primary/30"
-            >
-              <MessageSquare className="w-3.5 h-3.5" /> Hire me
-            </button>
           </nav>
         </div>
       </header>
@@ -309,14 +358,6 @@ export default function PortfolioPage() {
                 >
                   <FileText className="w-4 h-4" /> Download CV
                 </a>
-              )}
-              {p.email && (
-                <button
-                  onClick={startChat}
-                  className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-primary text-black text-sm font-bold hover:brightness-105 hover:-translate-y-0.5 transition-all shadow-lg shadow-primary/30"
-                >
-                  <MessageSquare className="w-4 h-4" /> Get in touch
-                </button>
               )}
               {(p.linkedin || p.github || p.website || p.phone) && (
                 <span className="inline-flex items-center gap-2 border border-secondary/10 bg-white/70 backdrop-blur px-3 py-1.5 rounded-full shadow-sm">
@@ -605,7 +646,7 @@ export default function PortfolioPage() {
                     onClick={startChat}
                     className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-primary text-black font-bold hover:brightness-105 hover:-translate-y-0.5 transition-all shadow-lg shadow-primary/30"
                   >
-                    <MessageSquare className="w-4 h-4" /> Get in touch
+                    <Lock className="w-4 h-4" /> Get in touch
                   </button>
                 )}
                 {hasDoc && (
@@ -619,6 +660,11 @@ export default function PortfolioPage() {
                   </a>
                 )}
               </div>
+              {p.email && (
+                <p className="mt-4 inline-flex items-center gap-1.5 text-xs text-white/50">
+                  <Lock className="w-3 h-3 text-primary" /> Messages are end-to-end encrypted — employers unlock chat with a one-time payment.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -637,6 +683,79 @@ export default function PortfolioPage() {
           )}
         </div>
       </footer>
+
+      {/* Unlock chat — one-time payment gate for employers */}
+      {payModal && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-secondary/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-pop-in">
+            <div className="bg-secondary text-white p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <CreditCard className="w-5 h-5 text-secondary" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold">Unlock chat</h3>
+                  <p className="text-white/60 text-xs">One-time payment to message {name.split(' ')[0]}</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="bg-secondary/5 rounded-2xl p-4 mb-5">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-secondary/60">Chat access fee</span>
+                  <span className="font-semibold text-secondary">₦{payPrice?.amount?.toLocaleString() || '5,000'}</span>
+                </div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-secondary/60">VAT (7.5%)</span>
+                  <span className="font-semibold text-secondary">
+                    ₦{payPrice ? Math.round(payPrice.amount * payPrice.vatRate).toLocaleString() : '375'}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-secondary/60">Service charge</span>
+                  <span className="font-semibold text-secondary">₦{payPrice?.serviceCharge?.toLocaleString() || '100'}</span>
+                </div>
+                <div className="border-t border-secondary/10 pt-2 flex justify-between">
+                  <span className="font-bold text-secondary">Total</span>
+                  <span className="font-bold text-secondary">
+                    ₦{payPrice
+                      ? (payPrice.amount + Math.round(payPrice.amount * payPrice.vatRate) + payPrice.serviceCharge).toLocaleString()
+                      : '5,475'}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-secondary/50 mb-5">
+                This is a one-time payment to unlock secure chat with this job seeker. Once paid, you can message them freely.
+              </p>
+
+              {payMsg && (
+                <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {payMsg}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => { setPayModal(false); setPayMsg(''); }}
+                  className="flex-1 py-2.5 rounded-xl bg-secondary/5 text-secondary font-semibold hover:bg-secondary/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={initiatePayment}
+                  disabled={payLoading}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                >
+                  {payLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                  Pay & unlock
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Secure end-to-end encrypted chat */}
       <SecureChat open={chatOpen} seedId={id} onClose={() => setChatOpen(false)} />
