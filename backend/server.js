@@ -2254,15 +2254,14 @@ app.post('/api/interviews/:id/signal', authenticateToken, async (req, res) => {
     if (!['offer', 'answer'].includes(kind) || !sdp) {
       return res.status(400).json({ message: 'Missing signal payload' });
     }
-    // Keep one offer + one answer per interview. Publishing a fresh offer
-    // also wipes the previous answer and every ICE candidate — those belong
-    // to an earlier call session and would otherwise be applied to the new
-    // connection, which is why re-joining a call after both sides ended it
-    // (without rescheduling) silently failed.
+    // Keep one offer + one answer per interview. Publishing a fresh offer also
+    // drops the previous session's answer so it can't be applied to a newly
+    // re-joined call. ICE candidates are intentionally left alone — the
+    // offerer posts its own candidates right after publishing the offer, so
+    // clearing them here would break (re)connection entirely.
     await Signal.deleteMany({ interviewId: interview._id, kind });
     if (kind === 'offer') {
       await Signal.deleteMany({ interviewId: interview._id, kind: 'answer' });
-      await IceCandidate.deleteMany({ interviewId: interview._id });
     }
     const sig = await Signal.create({ interviewId: interview._id, kind, sdp });
     res.status(201).json({ signal: { id: sig._id, kind: sig.kind } });
