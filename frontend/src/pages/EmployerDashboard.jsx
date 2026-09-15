@@ -68,7 +68,8 @@ export default function EmployerDashboard() {
   // Seekers state
   const [seekers, setSeekers] = useState([]);
   const [seekersLoading, setSeekersLoading] = useState(false);
-  const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | 'hub'
+  const [hubs, setHubs] = useState([]); // registered hubs for the filter dropdown
+  const [hubFilter, setHubFilter] = useState(''); // '' = all hubs
   const [search, setSearch] = useState('');
   const [viewing, setViewing] = useState(null); // seeker detail modal
 
@@ -114,8 +115,7 @@ export default function EmployerDashboard() {
   const loadSeekers = async () => {
     setSeekersLoading(true);
     try {
-      const qs = sourceFilter === 'hub' ? '?source=hub' : '';
-      const res = await fetch(`${API_URL}/seekers${qs}`, {
+      const res = await fetch(`${API_URL}/seekers`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
@@ -129,9 +129,24 @@ export default function EmployerDashboard() {
     }
   };
 
+  const loadHubs = async () => {
+    try {
+      const res = await fetch(`${API_URL}/hubs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setHubs(d.hubs || []);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => {
     loadProfile();
     loadSeekers();
+    loadHubs();
     loadPaymentInfo();
     handlePaymentCallback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,7 +155,7 @@ export default function EmployerDashboard() {
   useEffect(() => {
     if (tab === 'seekers') loadSeekers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, sourceFilter]);
+  }, [tab]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -187,6 +202,7 @@ export default function EmployerDashboard() {
   };
 
   const filteredSeekers = seekers.filter((s) => {
+    if (hubFilter && String(s.hubId) !== String(hubFilter)) return false;
     const q = search.toLowerCase();
     if (!q) return true;
     return (
@@ -548,27 +564,17 @@ export default function EmployerDashboard() {
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
-              <div className="flex gap-1 bg-secondary/5 p-1 rounded-xl w-fit">
-                <button
-                  onClick={() => setSourceFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                    sourceFilter === 'all'
-                      ? 'bg-primary text-secondary shadow'
-                      : 'text-secondary/60 hover:text-secondary'
-                  }`}
+              <div className="flex gap-1 p-1 rounded-xl w-fit">
+                <select
+                  value={hubFilter}
+                  onChange={(e) => setHubFilter(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-secondary/10 text-sm font-semibold text-secondary focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all max-w-[12rem]"
                 >
-                  All
-                </button>
-                <button
-                  onClick={() => setSourceFilter('hub')}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                    sourceFilter === 'hub'
-                      ? 'bg-primary text-secondary shadow'
-                      : 'text-secondary/60 hover:text-secondary'
-                  }`}
-                >
-                  Via Hub link
-                </button>
+                  <option value="">All hubs</option>
+                  {hubs.map((h) => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -583,8 +589,8 @@ export default function EmployerDashboard() {
                   No talent found
                 </p>
                 <p className="text-sm text-secondary/60 mt-1">
-                  {sourceFilter === 'hub'
-                    ? 'No seekers have registered through a hub link yet.'
+                  {hubFilter
+                    ? 'No approved, interviewed talent is registered with that hub yet.'
                     : 'Seekers who register will appear here for you to discover.'}
                 </p>
               </div>
@@ -646,8 +652,8 @@ export default function EmployerDashboard() {
 
                     <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-secondary/5">
                       {s.hubId ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Via hub link
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700" title="The talent hub this seeker is registered with">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> {s.hubName || 'Registered via hub'}
                         </span>
                       ) : (
                         <span className="text-xs text-secondary/40">Direct</span>
@@ -802,7 +808,7 @@ export default function EmployerDashboard() {
                   )}
                   {viewing.hubId && (
                     <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Registered via hub link
+                      <CheckCircle2 className="w-3.5 h-3.5" /> {viewing.hubName || 'Registered via a hub'}
                     </span>
                   )}
                 </div>

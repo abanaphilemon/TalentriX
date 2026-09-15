@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   Loader2,
   MapPin,
@@ -79,6 +79,15 @@ export default function PortfolioPage() {
   const { id } = useParams();
   const { content } = useContent();
   const branding = content.branding || {};
+  const navigate = useNavigate();
+  // Snapshot the history length on mount so the back button returns to the
+  // page the portfolio was opened from, and only falls back to home when the
+  // portfolio was opened directly (e.g. from a shared link).
+  const historyLenRef = useRef(typeof window !== 'undefined' ? window.history.length : 1);
+  const goBack = () => {
+    if (window.history.length > historyLenRef.current) navigate(-1);
+    else navigate('/');
+  };
   const [p, setP] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -240,7 +249,16 @@ export default function PortfolioPage() {
       {/* ===== Top bar ===== */}
       <header className="sticky top-0 z-40 bg-[#f7f5f0]/85 backdrop-blur-xl border-b border-secondary/5">
         <div className="max-w-5xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link to="/" className="inline-flex items-center gap-2 group">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={goBack}
+              title="Back to where you came from"
+              aria-label="Go back"
+              className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-secondary/10 bg-white/70 hover:bg-primary/15 hover:border-primary/40 text-secondary transition-colors shadow-sm"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+            <Link to="/" className="inline-flex items-center gap-2 group">
             <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden shadow-md shadow-primary/40">
               {branding.logo ? (
                 <img src={branding.logo} alt="" className="w-full h-full object-contain p-0.5" />
@@ -251,7 +269,8 @@ export default function PortfolioPage() {
             <span className="font-display font-bold tracking-tight group-hover:text-primary transition-colors">
               {branding.name || 'TalentriX'}
             </span>
-          </Link>
+            </Link>
+          </div>
           <nav className="flex items-center gap-2">
             {hasDoc && (
               <a

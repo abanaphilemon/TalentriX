@@ -13,6 +13,7 @@ import {
   UserPlus,
   RefreshCw,
   AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 
 const inputCls =
@@ -465,6 +466,11 @@ function MatchCard({ result, rank }) {
             )}
           </div>
           <div className="text-sm text-secondary/60 truncate">{s.title || 'Job seeker'}</div>
+          {s.hubId && (
+            <div className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 mt-1">
+              <CheckCircle2 className="w-3 h-3" /> {s.hubName || 'Registered via hub'}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1.5 mt-2">
             {(s.skills || []).slice(0, 6).map((sk) => (
               <span key={sk} className="text-xs font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full">{sk}</span>

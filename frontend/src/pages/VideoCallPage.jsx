@@ -142,6 +142,7 @@ export default function VideoCallPage() {
   const remoteWrapRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const appliedOfferRef = useRef(null);
   const remoteStreamRef = useRef(null);
   const pollRef = useRef(null);
   const statsIntervalRef = useRef(null);
@@ -343,6 +344,7 @@ export default function VideoCallPage() {
     }
     pcRef.current = null;
     remoteOfferAppliedRef.current = false;
+    appliedOfferRef.current = null;
     addedCandidatesRef.current = new Set();
     iceRestartCountRef.current = 0;
   };
@@ -610,30 +612,46 @@ export default function VideoCallPage() {
     if (cancelledRef.current) return;
     let state;
     try { state = await getSignalState(); } catch { return; }
+
     const pc = pcRef.current;
     if (!pc) return;
 
     if (offererRef.current) {
+      // We published the (newest) offer — apply the matching answer when it lands.
       if (state.answer && !pc.remoteDescription) {
         try { await pc.setRemoteDescription({ type: 'answer', sdp: state.answer }); }
         catch (e) { console.warn('setRemoteDescription(answer) failed:', e); }
       }
       applyCandidates(state.answerCandidates);
-    } else {
-      if (state.offer && !remoteOfferAppliedRef.current) {
-        remoteOfferAppliedRef.current = true;
-        try {
-          if (!pc.remoteDescription) {
-            await pc.setRemoteDescription({ type: 'offer', sdp: state.offer });
-          }
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          await postSignal({ kind: 'answer', sdp: pc.localDescription.sdp });
-          offererRef.current = true;
-        } catch (e) { console.warn('answer creation failed:', e); }
-      }
-      applyCandidates(state.offerCandidates);
+      return;
     }
+
+    // We are (or may become) the answerer. If the offer sitting in the room
+    // differs from the one we already answered — which happens when both
+    // sides ended the call and then re-joined without rescheduling, letting
+    // the admin publish a fresh offer — rebuild the connection against the
+    // new offer so the call actually connects again.
+    if (state.offer && state.offer !== appliedOfferRef.current) {
+      if (appliedOfferRef.current) {
+        resetPeerState();
+        const npc = createPeer(stream);
+        pcRef.current = npc;
+        if (cancelledRef.current) return;
+      }
+      const npc = pcRef.current;
+      if (!npc) return;
+      appliedOfferRef.current = state.offer;
+      remoteOfferAppliedRef.current = true;
+      try {
+        if (!npc.remoteDescription) {
+          await npc.setRemoteDescription({ type: 'offer', sdp: state.offer });
+        }
+        const answer = await npc.createAnswer();
+        await npc.setLocalDescription(answer);
+        await postSignal({ kind: 'answer', sdp: npc.localDescription.sdp });
+      } catch (e) { console.warn('answer creation failed:', e); }
+    }
+    applyCandidates(state.offerCandidates);
   }, [id, token]);
 
   /* ── Open camera/mic with device selection support ──────────────────── */

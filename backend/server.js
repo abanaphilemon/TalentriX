@@ -311,6 +311,16 @@ function lockContacts(u) {
   };
 }
 
+// Build a map of hubId → display name for a set of user documents, so
+// talent listings can show the name of the hub a seeker registered through
+// instead of a generic "via hub link" label.
+async function hubNameMapFor(userDocs) {
+  const ids = [...new Set(userDocs.map((u) => (u.hubId ? String(u.hubId) : '')).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const hubs = await User.find({ _id: { $in: ids } }).select('name company');
+  return new Map(hubs.map((h) => [String(h._id), h.company || h.name]));
+}
+
 // Secure chat pairing rules — only an employer and a job seeker may chat.
 function chatPairOk(a, b) {
   const roles = new Set([a.role, b.role]);
@@ -1237,15 +1247,35 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     // whether the seeker has replied (for UI hints), but the actual email is
     // always replaced with a mask here.
     const me = req.user.userId;
+    const hubNameBy = await hubNameMapFor(seekers);
     const out = await Promise.all(
       seekers.map(async (s) => {
-        return lockContacts(publicUser(s));
+        const pu = publicUser(s);
+        pu.hubName = hubNameBy.get(String(s.hubId)) || '';
+        return lockContacts(pu);
       })
     );
 
     res.json({ seekers: out });
   } catch (error) {
     console.error('Seekers error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: list every registered hub. Used by the talent pool to let the
+// employer filter talent by the hub they're registered with.
+app.get('/api/hubs', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') {
+      return res.status(403).json({ message: 'Only employer accounts can browse hubs' });
+    }
+    const hubs = await User.find({ role: 'hub', status: 'approved', active: true })
+      .select('name company')
+      .sort({ company: 1 });
+    res.json({ hubs: hubs.map((h) => ({ id: h._id, name: h.company || h.name })) });
+  } catch (error) {
+    console.error('Hubs error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -2224,8 +2254,16 @@ app.post('/api/interviews/:id/signal', authenticateToken, async (req, res) => {
     if (!['offer', 'answer'].includes(kind) || !sdp) {
       return res.status(400).json({ message: 'Missing signal payload' });
     }
-    // Keep one offer + one answer per interview.
+    // Keep one offer + one answer per interview. Publishing a fresh offer
+    // also wipes the previous answer and every ICE candidate — those belong
+    // to an earlier call session and would otherwise be applied to the new
+    // connection, which is why re-joining a call after both sides ended it
+    // (without rescheduling) silently failed.
     await Signal.deleteMany({ interviewId: interview._id, kind });
+    if (kind === 'offer') {
+      await Signal.deleteMany({ interviewId: interview._id, kind: 'answer' });
+      await IceCandidate.deleteMany({ interviewId: interview._id });
+    }
     const sig = await Signal.create({ interviewId: interview._id, kind, sdp });
     res.status(201).json({ signal: { id: sig._id, kind: sig.kind } });
   } catch (error) {
@@ -2285,6 +2323,7 @@ async function matchTalentRequest(tr) {
   const roleWords = roleTag.split(' ').filter((w) => w.length > 2);
 
   const seekers = await User.find({ role: 'seeker', status: 'approved', active: true, interviewDone: true }).select('-password -e2ePriv');
+  const hubNameBy = await hubNameMapFor(seekers);
   const results = seekers.map((s) => {
     const profileSkills = (s.skills || []).map(normalizeTag).filter(Boolean);
     const profileSet = new Set(profileSkills);
@@ -2327,8 +2366,11 @@ async function matchTalentRequest(tr) {
       role: roleScore >= 0.8 ? 1 : roleScore >= 0.5 ? 0.5 : 0,
     };
 
+    const pu = publicUser(s);
+    pu.hubName = hubNameBy.get(String(s.hubId)) || '';
+
     return {
-      seeker: lockContacts(publicUser(s)),
+      seeker: lockContacts(pu),
       match,
       skillMatches: Math.min(skillSet.size, Math.round(skillHits)),
       skillCount: reqSkills.length,
