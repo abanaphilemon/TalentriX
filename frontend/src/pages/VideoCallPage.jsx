@@ -142,6 +142,7 @@ export default function VideoCallPage() {
   const remoteWrapRef = useRef(null);
   const pcRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const pollRef = useRef(null);
   const statsIntervalRef = useRef(null);
   const timerRef = useRef(null);
@@ -560,7 +561,21 @@ export default function VideoCallPage() {
   }, [wireConnectionState, remoteJoined, addToast]);
 
   const attachRemoteStream = useCallback((stream) => {
+    remoteStreamRef.current = stream;
     if (remoteRef.current) remoteRef.current.srcObject = stream;
+  }, []);
+
+  // Callback refs re-attach the current stream when the <video> element
+  // remounts (e.g. toggling speaker/gallery view), so the picture never
+  // goes blank. Without this, srcObject is only set when the stream
+  // changes, leaving the fresh element with no stream.
+  const setLocalVideoEl = useCallback((el) => {
+    localRef.current = el;
+    if (el && localStreamRef.current) el.srcObject = localStreamRef.current;
+  }, []);
+  const setRemoteVideoEl = useCallback((el) => {
+    remoteRef.current = el;
+    if (el && remoteStreamRef.current) el.srcObject = remoteStreamRef.current;
   }, []);
 
   /* ── Offer/answer creation ──────────────────────────────────────────── */
@@ -1203,7 +1218,7 @@ export default function VideoCallPage() {
               /* Gallery view (desktop) — both participants side by side */
               <div className="absolute inset-0 grid grid-cols-2 gap-1.5 sm:gap-2 p-1.5 sm:p-2">
                 <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-black ring-1 ring-white/10 min-w-0">
-                  <video ref={localRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                  <video ref={setLocalVideoEl} autoPlay playsInline muted className="w-full h-full object-cover" />
                   {!camOn && (
                     <div className="absolute inset-0 bg-gradient-to-br from-[#1a2333] to-[#0b1220] flex items-center justify-center">
                       <VideoOff className="w-8 h-8 text-white/30" />
@@ -1220,7 +1235,7 @@ export default function VideoCallPage() {
                   )}
                 </div>
                 <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-black ring-1 ring-white/10 min-w-0">
-                  <video ref={remoteRef} autoPlay playsInline className={remoteVideoClass} />
+                  <video ref={setRemoteVideoEl} autoPlay playsInline className={remoteVideoClass} />
                   {remoteIsScreenShare && (
                     <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full bg-primary/80 text-secondary text-[10px] font-bold backdrop-blur">
                       <Monitor className="w-3 h-3" /> Screen share
@@ -1246,7 +1261,7 @@ export default function VideoCallPage() {
                   onClick={(e) => e.stopPropagation()}
                   className={`absolute transition-all duration-300 overflow-hidden bg-black ${remoteClasses}`}
                 >
-                  <video ref={remoteRef} autoPlay playsInline onClick={(e) => e.stopPropagation()} className={remoteVideoClass} />
+                  <video ref={setRemoteVideoEl} autoPlay playsInline onClick={(e) => e.stopPropagation()} className={remoteVideoClass} />
                   {remoteIsScreenShare && (
                     <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full bg-primary/80 text-secondary text-[10px] font-bold backdrop-blur z-10">
                       <Monitor className="w-3 h-3" /> Screen share
@@ -1273,7 +1288,7 @@ export default function VideoCallPage() {
                   onClick={(e) => e.stopPropagation()}
                   className={`absolute transition-all duration-300 overflow-hidden bg-black ${localClasses}`}
                 >
-                  <video ref={localRef} autoPlay playsInline muted onClick={(e) => e.stopPropagation()} className="w-full h-full object-cover" />
+                  <video ref={setLocalVideoEl} autoPlay playsInline muted onClick={(e) => e.stopPropagation()} className="w-full h-full object-cover" />
                   {!camOn && (
                     <div className="absolute inset-0 bg-gradient-to-br from-[#1a2333] to-[#0b1220] flex items-center justify-center">
                       <VideoOff className={mainView === 'self' ? 'w-10 h-10 text-white/30' : 'w-5 h-5 text-white/40'} />

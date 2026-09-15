@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const ADMIN_TOKEN_KEY = 'tbai.adminToken';
@@ -1116,30 +1117,20 @@ function LogoField({ v, onV }) {
   const [reading, setReading] = useState(false);
   const [err, setErr] = useState('');
 
-  const onFile = (e) => {
+  const onFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setErr('Please choose an image file (PNG, JPG, SVG, …).');
-      return;
-    }
-    if (file.size > 1024 * 1024) {
-      setErr('Image is too large — please use a file under 1 MB.');
-      return;
-    }
     setErr('');
     setReading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      onV(reader.result);
+    try {
+      const dataUrl = await readImageFile(file, { forcePng: true });
+      onV(dataUrl);
+    } catch (err) {
+      setErr(err.message || 'Could not read that file. Try another one.');
+    } finally {
       setReading(false);
-    };
-    reader.onerror = () => {
-      setErr('Could not read that file. Try another one.');
-      setReading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -1179,7 +1170,7 @@ function LogoField({ v, onV }) {
             )}
           </div>
           <p className="text-xs text-secondary/50 mt-1.5">
-            Upload an image (≤1 MB) or paste an image URL below.
+            Upload an image (large photos are auto-resized) or paste an image URL below.
           </p>
         </div>
       </div>

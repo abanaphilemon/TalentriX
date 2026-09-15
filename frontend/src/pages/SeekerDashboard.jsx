@@ -36,6 +36,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import { ensureKeys } from '../lib/e2e.js';
+import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -523,30 +524,20 @@ export default function SeekerDashboard() {
     }
   };
 
-  const onPhotoFile = (e) => {
+  const onPhotoFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setCvMsg('Please choose an image file.');
-      return;
-    }
-    if (file.size > 1 * 1024 * 1024) {
-      setCvMsg('Photo is too large — please use an image under 1 MB.');
-      return;
-    }
     setCvMsg('');
     setPhotoReading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      set('avatar', reader.result);
+    try {
+      const avatar = await readImageFile(file);
+      set('avatar', avatar);
+    } catch (err) {
+      setCvMsg(err.message || 'Could not read that image. Try another.');
+    } finally {
       setPhotoReading(false);
-    };
-    reader.onerror = () => {
-      setCvMsg('Could not read that image. Try another.');
-      setPhotoReading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const onCvFile = (e) => {
@@ -1092,13 +1083,13 @@ export default function SeekerDashboard() {
                           {form.avatar ? 'Change photo' : 'Upload photo'}
                         </button>
                         <p className="text-[11px] text-secondary/40 max-w-[9rem] text-center">
-                          JPG or PNG under 1 MB
+                          JPG or PNG — large photos are auto-resized
                         </p>
                       </div>
 
                       <div className="grid sm:grid-cols-2 gap-4 flex-1">
                         <Field label="Full name">
-                          <input className={inputCls} value={form.name || ''} onChange={(e) => set('name', e.target.value)} />
+                          <input className={inputCls} autoComplete="off" value={form.name || ''} onChange={(e) => set('name', e.target.value)} />
                         </Field>
                         <Field label="Headline / desired role">
                           <input

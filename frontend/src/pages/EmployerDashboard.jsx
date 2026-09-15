@@ -30,6 +30,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import EmployerRequestTalent from './EmployerRequestTalent.jsx';
+import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -143,31 +144,21 @@ export default function EmployerDashboard() {
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const onLogoFile = (e) => {
+  const onLogoFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setSavedMsg('Please choose an image file.');
-      return;
-    }
-    if (file.size > 1 * 1024 * 1024) {
-      setSavedMsg('Logo is too large — please use an image under 1 MB.');
-      return;
-    }
     setSavedMsg('');
     setLogoReading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      set('logo', reader.result);
-      setLogoReading(false);
+    try {
+      const logo = await readImageFile(file, { forcePng: true });
+      set('logo', logo);
       setSavedMsg('Logo ready — press “Save changes” to keep it.');
-    };
-    reader.onerror = () => {
-      setSavedMsg('Could not read that image. Try another.');
+    } catch (err) {
+      setSavedMsg(err.message || 'Could not read that image. Try another.');
+    } finally {
       setLogoReading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const saveProfile = async () => {
@@ -441,7 +432,7 @@ export default function EmployerDashboard() {
                     {form.logo ? 'Change logo / photo' : 'Upload logo / photo'}
                   </button>
                   <p className="text-[11px] text-secondary/40 mt-1.5">
-                    JPG or PNG under 1 MB — shown as your organization image.
+                    JPG or PNG — large photos are auto-resized; shown as your organization image.
                   </p>
                 </div>
                 <h2 className="font-display text-xl font-bold text-secondary mt-4 text-center">

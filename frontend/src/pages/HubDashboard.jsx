@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -248,31 +249,21 @@ export default function HubDashboard() {
     }
   };
 
-  const onLogoFile = (e) => {
+  const onLogoFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setOrgMsg('Please choose an image file.');
-      return;
-    }
-    if (file.size > 1 * 1024 * 1024) {
-      setOrgMsg('Logo is too large — please use an image under 1 MB.');
-      return;
-    }
     setOrgMsg('');
     setOrgReading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setOrgLogo(reader.result);
-      setOrgReading(false);
+    try {
+      const logo = await readImageFile(file, { forcePng: true });
+      setOrgLogo(logo);
       setOrgMsg('Logo ready — press “Save partner info” to keep it.');
-    };
-    reader.onerror = () => {
-      setOrgMsg('Could not read that image. Try another.');
+    } catch (err) {
+      setOrgMsg(err.message || 'Could not read that image. Try another.');
+    } finally {
       setOrgReading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const saveOrg = async () => {
@@ -675,7 +666,7 @@ export default function HubDashboard() {
                       Upload logo
                     </button>
                     <span className="text-[11px] text-secondary/40">
-                      JPG or PNG under 1 MB — leave blank for an auto-generated logo.
+                      JPG or PNG — large photos are auto-resized; leave blank for an auto-generated logo.
                     </span>
                   </div>
                 </div>

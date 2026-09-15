@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -166,7 +167,10 @@ export default function OnboardingPage() {
           if (!active) return;
           setForm({
             name: p.name || user?.name || '',
-            company: p.company || '',
+            // For orgs the visible "name" field maps to company, so seed it from
+            // the signup name when no company was set yet — this avoids the
+            // input silently snapping back to data it doesn't own.
+            company: p.company || (role === 'hub' || role === 'employer' ? p.name || user?.name || '' : ''),
             title: p.title || '',
             location: p.location || '',
             bio: p.bio || '',
@@ -200,24 +204,21 @@ export default function OnboardingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role]);
 
-  const onPhotoFile = (e) => {
+  const onPhotoFile = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (!file.type.startsWith('image/')) return setMsg('Please choose an image file.');
-    if (file.size > 1 * 1024 * 1024) return setMsg('Photo is too large — use an image under 1 MB.');
     setMsg('');
     setPhotoReading(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      set('avatar', reader.result);
+    try {
+      const isOrg = role === 'hub' || role === 'employer';
+      const dataUrl = await readImageFile(file, { forcePng: isOrg });
+      set(isOrg ? 'logo' : 'avatar', dataUrl);
+    } catch (err) {
+      setMsg(err.message || 'Could not read that image. Try another.');
+    } finally {
       setPhotoReading(false);
-    };
-    reader.onerror = () => {
-      setMsg('Could not read that image. Try another.');
-      setPhotoReading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
 
   const onCvFile = (e) => {
@@ -610,7 +611,7 @@ function SeekerForm({ form, set, photoRef, photoReading, onPhotoFile, cvReading,
           </div>
           <div className="grid sm:grid-cols-2 gap-4 flex-1">
             <Field label="Full name">
-              <input className={inputCls} value={form.name || ''} onChange={(e) => set('name', e.target.value)} />
+              <input className={inputCls} autoComplete="off" value={form.name || ''} onChange={(e) => set('name', e.target.value)} />
             </Field>
             <Field label="Headline / desired role">
               <input className={inputCls} placeholder="e.g. Senior Frontend Engineer" value={form.title || ''} onChange={(e) => set('title', e.target.value)} />
@@ -738,7 +739,7 @@ function HubForm({ form, set, photoRef, photoReading, onPhotoFile }) {
         </div>
         <div className="grid sm:grid-cols-2 gap-4 flex-1">
           <Field label="Hub name">
-            <input className={inputCls} value={form.company || form.name || ''} onChange={(e) => set('company', e.target.value)} />
+            <input className={inputCls} autoComplete="off" value={form.company || ''} onChange={(e) => set('company', e.target.value)} />
           </Field>
           <Field label="Location" icon={MapPin}>
             <input className={`${inputCls} pl-9`} placeholder="e.g. Lagos, Nigeria" value={form.location || ''} onChange={(e) => set('location', e.target.value)} />
@@ -782,7 +783,7 @@ function EmployerForm({ form, set, photoRef, photoReading, onPhotoFile }) {
         </div>
         <div className="grid sm:grid-cols-2 gap-4 flex-1">
           <Field label="Company name">
-            <input className={inputCls} value={form.company || form.name || ''} onChange={(e) => set('company', e.target.value)} />
+            <input className={inputCls} autoComplete="off" value={form.company || ''} onChange={(e) => set('company', e.target.value)} />
           </Field>
           <Field label="Role you fill">
             <input className={inputCls} placeholder="e.g. Hiring Manager, HR Lead" value={form.title || ''} onChange={(e) => set('title', e.target.value)} />
