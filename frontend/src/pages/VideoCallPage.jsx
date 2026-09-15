@@ -34,7 +34,7 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 /* -------------------------------------------------------------------------- */
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || navigator.maxTouchPoints > 0;
 const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-const canShareScreen = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
+const canGetDisplayMedia = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
 
 /* -------------------------------------------------------------------------- */
 /*  ICE servers — STUN always, TURN optional (fetched from backend)            */
@@ -48,6 +48,9 @@ const MAX_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BASE_DELAY_MS = 2000;
 const POLL_FAST_MS = 1500;
 const POLL_SLOW_MS = 3000;
+const CONTROLS_IDLE_MS = 5000; // desktop auto-hide delay
+const TRACK_HEALTH_CHECK_MS = 3000;
+const REMOTE_LEFT_TIMEOUT_MS = 15_000; // if disconnected > 15s with no track, assume left
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                    */
@@ -71,6 +74,22 @@ function getConnQuality(pc) {
   if (rtt < 100 && packetsLost === 0) return 'good';
   if (rtt < 300 && packetsLost < packetsReceived * 0.05) return 'fair';
   return 'poor';
+}
+
+function isTrackDead(track) {
+  return !track || track.readyState === 'ended' || track.muted;
+}
+
+function isRemoteScreenShare(stream) {
+  if (!stream) return false;
+  const vt = stream.getVideoTracks()[0];
+  if (!vt) return false;
+  const s = vt.getSettings();
+  // displaySurface is set when sharing screen/tab/window
+  if (s.displaySurface && s.displaySurface !== 'none') return true;
+  // Heuristic: screen shares are typically landscape and wide
+  if (s.width && s.height && s.width > s.height * 1.3) return true;
+  return false;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -97,6 +116,7 @@ export default function VideoCallPage() {
   const [camOn, setCamOn] = useState(true);
   const [sharing, setSharing] = useState(false);
   const [remoteJoined, setRemoteJoined] = useState(false);
+  const [remoteLeft, setRemoteLeft] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
@@ -113,6 +133,7 @@ export default function VideoCallPage() {
   const [mainView, setMainView] = useState('remote'); // mobile: remote | self
   const [viewMode, setViewMode] = useState('speaker'); // desktop: speaker | gallery
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [remoteIsScreenShare, setRemoteIsScreenShare] = useState(false);
 
   /* ── Refs ───────────────────────────────────────────────────────────── */
   const localRef = useRef(null);
@@ -130,13 +151,17 @@ export default function VideoCallPage() {
   const offererRef = useRef(false);
   const remoteOfferAppliedRef = useRef(false);
   const iceRestartCountRef = useRef(0);
-  const lastRemoteTrackTimeRef = useRef(0);
   const cancelledRef = useRef(false);
   const mainViewRef = useRef('remote');
   const viewModeRef = useRef('speaker');
   const facingModeRef = useRef('user');
   const camTrackRef = useRef(null);
   const screenTrackRef = useRef(null);
+  const controlsTimerRef = useRef(null);
+  const healthCheckRef = useRef(null);
+  const remoteDisconnectTimerRef = useRef(null);
+  const controlsShownRef = useRef(true);
+  const stageRef = useRef(null);
 
   /* ── Toast helper ───────────────────────────────────────────────────── */
   const addToast = useCallback((msg, type = 'info', durationMs = 4000) => {
@@ -158,6 +183,28 @@ export default function VideoCallPage() {
     setMainView(v);
   };
   const setViewModeSafe = (v) => { viewModeRef.current = v; setViewMode(v); };
+
+  /* ── Controls show/hide logic ────────────────────────────────────────── */
+  const showControls = useCallback(() => {
+    controlsShownRef.current = true;
+    setControlsShown(true);
+    // Reset the auto-hide timer (desktop only)
+    if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    if (!isMobile) {
+      controlsTimerRef.current = setTimeout(() => {
+        if (statusRef.current === 'active') {
+          controlsShownRef.current = false;
+          setControlsShown(false);
+        }
+      }, CONTROLS_IDLE_MS);
+    }
+  }, []);
+
+  const hideControls = useCallback(() => {
+    if (isMobile) return; // on mobile, tapping the stage toggles instead
+    controlsShownRef.current = false;
+    setControlsShown(false);
+  }, []);
 
   /* ── Device enumeration ─────────────────────────────────────────────── */
   const refreshDevices = useCallback(async () => {
@@ -249,14 +296,39 @@ export default function VideoCallPage() {
     };
   }, []);
 
-  /* ── Auto-hide controls after idle (desktop only) ───────────────────── */
+  /* ── Controls auto-hide + show on mouse/touch ──────────────────────── */
+  // Desktop: auto-hide after idle, re-show on mouse move / pointer down / touch
   useEffect(() => {
-    if (!controlsShown || isMobile) return;
-    const t = setTimeout(() => setControlsShown(false), 3500);
-    return () => clearTimeout(t);
-  }, [controlsShown]);
+    if (isMobile) return; // mobile uses tap-to-toggle
 
-  const toggleControls = useCallback(() => setControlsShown((c) => !c), []);
+    const stage = stageRef.current;
+    const onPointer = () => showControls();
+    const onKeyDown = (e) => {
+      // Any key press re-shows controls
+      if (!e.target.closest('input, textarea')) showControls();
+    };
+
+    // Show on mouse/pointer movement anywhere in the stage
+    if (stage) {
+      stage.addEventListener('mousemove', onPointer);
+      stage.addEventListener('pointerdown', onPointer);
+    }
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      if (stage) {
+        stage.removeEventListener('mousemove', onPointer);
+        stage.removeEventListener('pointerdown', onPointer);
+      }
+      document.removeEventListener('keydown', onKeyDown);
+      if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+    };
+  }, [showControls]);
+
+  // Kick off the initial auto-hide timer when status becomes active
+  useEffect(() => {
+    if (status === 'active' && !isMobile) showControls();
+  }, [status, showControls]);
 
   /* ── WebRTC helpers ─────────────────────────────────────────────────── */
   const resetPeerState = () => {
@@ -277,8 +349,11 @@ export default function VideoCallPage() {
   const cleanup = () => {
     clearInterval(pollRef.current);
     clearInterval(statsIntervalRef.current);
+    clearInterval(healthCheckRef.current);
     clearTimeout(connectionTimerRef.current);
     clearTimeout(timerRef.current);
+    clearTimeout(controlsTimerRef.current);
+    clearTimeout(remoteDisconnectTimerRef.current);
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((t) => t.stop());
     }
@@ -354,17 +429,36 @@ export default function VideoCallPage() {
       const cs = pc.connectionState;
       if (cs === 'connected' && statusRef.current !== 'active') {
         clearTimeout(connectionTimerRef.current);
+        clearTimeout(remoteDisconnectTimerRef.current);
         setReconnecting(false);
         setReconnectAttempt(0);
         reconnectCountRef.current = 0;
         iceRestartCountRef.current = 0;
         updateStatus('active');
-      } else if (cs === 'disconnected' || cs === 'failed') {
+      } else if (cs === 'disconnected') {
         if (statusRef.current === 'active' && !cancelledRef.current) {
+          // Start a timer: if still disconnected after REMOTE_LEFT_TIMEOUT_MS, assume peer left
+          if (!remoteDisconnectTimerRef.current) {
+            remoteDisconnectTimerRef.current = setTimeout(() => {
+              if (pcRef.current && pcRef.current.connectionState === 'disconnected' && !cancelledRef.current) {
+                addToast('The other person appears to have left the call.', 'error', 8000);
+                setRemoteLeft(true);
+                remoteDisconnectTimerRef.current = null;
+              }
+            }, REMOTE_LEFT_TIMEOUT_MS);
+          }
+          // Also try reconnecting immediately
           handleDisconnect(pc, cs);
+        }
+      } else if (cs === 'failed') {
+        if (statusRef.current === 'active' && !cancelledRef.current) {
+          addToast('The other person has left the call.', 'error', 8000);
+          setRemoteLeft(true);
+          updateStatus('ended');
         }
       } else if (cs === 'closed') {
         if (statusRef.current === 'active' && !cancelledRef.current) {
+          setRemoteLeft(true);
           updateStatus('ended');
         }
       }
@@ -412,7 +506,6 @@ export default function VideoCallPage() {
         await pc.setLocalDescription(offer);
         await postSignal({ kind: 'offer', sdp: pc.localDescription.sdp });
       } else {
-        // Answerer triggers negotiation; offerer will do the restart.
         await pc.createOffer({ iceRestart: true }).then(async (offer) => {
           await pc.setLocalDescription(offer);
           await postSignal({ kind: 'offer', sdp: pc.localDescription.sdp });
@@ -426,18 +519,45 @@ export default function VideoCallPage() {
   const wirePeer = useCallback((pc, onRemoteStream) => {
     pc.ontrack = (e) => {
       if (e.streams && e.streams[0]) {
-        lastRemoteTrackTimeRef.current = Date.now();
         if (!remoteJoined) setRemoteJoined(true);
+        clearTimeout(remoteDisconnectTimerRef.current);
+        setRemoteLeft(false);
         onRemoteStream(e.streams[0]);
+
+        // Detect screen share on remote stream
+        const checkScreen = () => setRemoteIsScreenShare(isRemoteScreenShare(e.streams[0]));
+        checkScreen();
+        // Re-check when track settings change
+        e.streams[0].getTracks().forEach((t) => {
+          t.addEventListener('settingschanged', checkScreen);
+        });
       }
     };
+
+    // Detect remote tracks ending (peer left)
+    pc.ontrack = ((orig) => (e) => {
+      orig(e);
+      if (e.streams && e.streams[0]) {
+        e.streams[0].getTracks().forEach((t) => {
+          t.addEventListener('ended', () => {
+            if (cancelledRef.current) return;
+            const remaining = e.streams[0].getTracks().filter((tr) => tr.readyState === 'live');
+            if (remaining.length === 0) {
+              addToast('The other person has left the call.', 'error', 8000);
+              setRemoteLeft(true);
+            }
+          });
+        });
+      }
+    })(pc.ontrack);
+
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         postIce(offererRef.current ? 'offer' : 'answer', JSON.stringify(e.candidate));
       }
     };
     wireConnectionState(pc);
-  }, [wireConnectionState, remoteJoined]);
+  }, [wireConnectionState, remoteJoined, addToast]);
 
   const attachRemoteStream = useCallback((stream) => {
     if (remoteRef.current) remoteRef.current.srcObject = stream;
@@ -523,7 +643,6 @@ export default function VideoCallPage() {
     try {
       return await navigator.mediaDevices.getUserMedia(constraints);
     } catch {
-      // Fallback: try with minimal constraints
       return await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     }
   }, []);
@@ -542,6 +661,24 @@ export default function VideoCallPage() {
     }
     setCamOn(true);
   }, []);
+
+  /* ── Recover dead camera track ──────────────────────────────────────── */
+  const recoverCamera = useCallback(async () => {
+    if (cancelledRef.current || isScreenShareActive()) return;
+    try {
+      const newStream = await openMedia(selectedCam, selectedMic, facingModeRef.current);
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (newVideoTrack) {
+        await replaceVideoTrack(newVideoTrack);
+        addToast('Camera reconnected', 'success', 2000);
+      }
+    } catch {
+      setCamOn(false);
+      addToast('Could not re-acquire camera. Check browser permissions.', 'error');
+    }
+  }, [selectedCam, selectedMic, openMedia, replaceVideoTrack, addToast]);
+
+  const isScreenShareActive = () => !!screenTrackRef.current;
 
   /* ── Switch camera/mic mid-call ─────────────────────────────────────── */
   const switchDevice = useCallback(async (kind, deviceId) => {
@@ -595,7 +732,6 @@ export default function VideoCallPage() {
 
   /* ── Main setup effect ──────────────────────────────────────────────── */
   useEffect(() => {
-    let timerIv;
     cancelledRef.current = false;
 
     (async () => {
@@ -685,14 +821,38 @@ export default function VideoCallPage() {
       statsIntervalRef.current = setInterval(collectStats, 3000);
       const t0 = Date.now();
       timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
+
+      // 7. Dead track health check — if the OS/browser kills the camera/mic
+      //    we detect it within TRACK_HEALTH_CHECK_MS and attempt auto-recovery.
+      healthCheckRef.current = setInterval(() => {
+        if (cancelledRef.current) return;
+        const ls = localStreamRef.current;
+        if (!ls) return;
+
+        const vt = ls.getVideoTracks()[0];
+        const at = ls.getAudioTracks()[0];
+
+        if (vt && vt.readyState === 'ended') {
+          setCamOn(false);
+          // Attempt recovery once
+          recoverCamera();
+        }
+        if (at && at.readyState === 'ended') {
+          setMicOn(false);
+          addToast('Microphone was disconnected', 'error');
+        }
+      }, TRACK_HEALTH_CHECK_MS);
     })();
 
     return () => {
       cancelledRef.current = true;
       clearInterval(pollRef.current);
       clearInterval(statsIntervalRef.current);
+      clearInterval(healthCheckRef.current);
       clearTimeout(connectionTimerRef.current);
       clearTimeout(timerRef.current);
+      clearTimeout(controlsTimerRef.current);
+      clearTimeout(remoteDisconnectTimerRef.current);
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
       resetPeerState();
     };
@@ -723,7 +883,7 @@ export default function VideoCallPage() {
       if (cancelledRef.current) return;
       if (e.track.kind === 'video') {
         setCamOn(false);
-        addToast('Camera was disconnected', 'error');
+        addToast('Camera was disconnected. Tap the camera button to try reconnecting.', 'error', 6000);
       } else if (e.track.kind === 'audio') {
         setMicOn(false);
         addToast('Microphone was disconnected', 'error');
@@ -742,7 +902,7 @@ export default function VideoCallPage() {
       switch (e.key.toLowerCase()) {
         case 'm': toggleMic(); break;
         case 'v': toggleCam(); break;
-        case 's': if (canShareScreen) toggleShare(); break;
+        case 's': toggleShare(); break;
         case 'f': if (!isMobile) toggleFullscreen(); break;
         case 'escape': setShowEndConfirm(false); setShowSettings(false); break;
         case 'delete':
@@ -767,13 +927,27 @@ export default function VideoCallPage() {
     if (!next) addToast('Microphone muted', 'info', 2000);
   };
 
-  const toggleCam = () => {
+  const toggleCam = async () => {
     const ls = localStreamRef.current;
     if (!ls) return;
-    const next = !camOn;
-    ls.getVideoTracks().forEach((t) => { t.enabled = next; });
-    setCamOn(next);
-    if (!next) addToast('Camera off', 'info', 2000);
+
+    // If currently off — re-enable (may need to re-acquire a dead track)
+    if (!camOn) {
+      const existingTrack = ls.getVideoTracks()[0];
+      if (existingTrack && existingTrack.readyState === 'live') {
+        existingTrack.enabled = true;
+        setCamOn(true);
+      } else {
+        // Track is dead — re-acquire a new camera stream
+        await recoverCamera();
+      }
+      return;
+    }
+
+    // Turning camera off
+    ls.getVideoTracks().forEach((t) => { t.enabled = false; });
+    setCamOn(false);
+    addToast('Camera off', 'info', 2000);
   };
 
   const restoreCameraTrack = async () => {
@@ -814,9 +988,10 @@ export default function VideoCallPage() {
       return;
     }
 
-    if (!canShareScreen) {
-      setShareError('Screen sharing is not supported on this device or browser.');
-      setTimeout(() => setShareError(''), 4000);
+    // Graceful fallback for unsupported environments
+    if (!canGetDisplayMedia) {
+      setShareError('Screen sharing is not supported on this device or browser. Please use a laptop or desktop with Chrome, Edge, or Firefox.');
+      setTimeout(() => setShareError(''), 6000);
       return;
     }
 
@@ -825,9 +1000,9 @@ export default function VideoCallPage() {
       if (isMobile) shareConstraints.video.preferCurrentTab = true;
 
       const screen = await navigator.mediaDevices.getDisplayMedia(shareConstraints);
-      const screenTrack = screen.getVideoTracks()[0];
+      const screenVideoTrack = screen.getVideoTracks()[0];
 
-      if (!screenTrack) {
+      if (!screenVideoTrack) {
         setShareError('Screen capture was denied.');
         setTimeout(() => setShareError(''), 4000);
         return;
@@ -836,17 +1011,17 @@ export default function VideoCallPage() {
       // Keep the camera track so we can restore it when sharing ends
       const camTrack = ls.getVideoTracks()[0] || null;
       camTrackRef.current = camTrack;
-      screenTrackRef.current = screenTrack;
+      screenTrackRef.current = screenVideoTrack;
       if (camTrack) ls.removeTrack(camTrack);
-      ls.addTrack(screenTrack);
+      ls.addTrack(screenVideoTrack);
 
       const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
-      if (sender) await sender.replaceTrack(screenTrack);
+      if (sender) await sender.replaceTrack(screenVideoTrack);
       if (localRef.current) localRef.current.srcObject = ls;
       setSharing(true);
       setShareError('');
 
-      screenTrack.addEventListener('ended', async () => {
+      screenVideoTrack.addEventListener('ended', async () => {
         if (cancelledRef.current) return;
         try { await stopSharing(); } catch { /* ignore */ }
         setSharing(false);
@@ -865,7 +1040,11 @@ export default function VideoCallPage() {
     setShowEndConfirm(false);
     clearInterval(pollRef.current);
     clearInterval(statsIntervalRef.current);
+    clearInterval(healthCheckRef.current);
     clearTimeout(connectionTimerRef.current);
+    clearTimeout(timerRef.current);
+    clearTimeout(controlsTimerRef.current);
+    clearTimeout(remoteDisconnectTimerRef.current);
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     resetPeerState();
@@ -918,7 +1097,7 @@ export default function VideoCallPage() {
         setTimeout(() => {
           if (isMobile && !wasMoved && elRef.current) {
             setMainViewSafe(mainViewRef.current === 'remote' ? 'self' : 'remote');
-            setControlsShown(true);
+            showControls();
           }
         }, 0);
       };
@@ -952,6 +1131,11 @@ export default function VideoCallPage() {
   const localClasses = isMobile
     ? (mainView === 'self' ? 'inset-0' : `${PIP_M} right-3 bottom-28`)
     : `${PIP_D} right-4 bottom-24`;
+
+  // Remote video class: screen shares use object-contain so the full content is visible
+  const remoteVideoClass = remoteIsScreenShare
+    ? 'w-full h-full object-contain bg-[#0a0e18]'
+    : 'w-full h-full object-cover';
 
   return (
     <div className="h-[100dvh] min-h-[100svh] bg-[#0b1220] text-white flex flex-col overflow-hidden select-none">
@@ -1005,8 +1189,12 @@ export default function VideoCallPage() {
 
       {/* ── Main stage ──────────────────────────────────────────────── */}
       <main
+        ref={stageRef}
         className="flex-1 relative overflow-hidden bg-[#05070d]"
-        onClick={inCall ? toggleControls : undefined}
+        onClick={inCall ? () => {
+          // On mobile: toggle controls. On desktop: controls show/hide via pointer events.
+          if (isMobile) setControlsShown((c) => !c);
+        } : undefined}
       >
         {/* Active / connecting call */}
         {inCall && (
@@ -1032,7 +1220,12 @@ export default function VideoCallPage() {
                   )}
                 </div>
                 <div className="relative rounded-xl sm:rounded-2xl overflow-hidden bg-black ring-1 ring-white/10 min-w-0">
-                  <video ref={remoteRef} autoPlay playsInline className="w-full h-full object-cover" />
+                  <video ref={remoteRef} autoPlay playsInline className={remoteVideoClass} />
+                  {remoteIsScreenShare && (
+                    <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full bg-primary/80 text-secondary text-[10px] font-bold backdrop-blur">
+                      <Monitor className="w-3 h-3" /> Screen share
+                    </div>
+                  )}
                   <div className="absolute inset-x-0 bottom-0 px-3 pt-8 pb-2 bg-gradient-to-t from-black/70 to-transparent flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-green-400" />
                     <span className="text-xs sm:text-sm font-semibold truncate">{otherName}</span>
@@ -1053,12 +1246,19 @@ export default function VideoCallPage() {
                   onClick={(e) => e.stopPropagation()}
                   className={`absolute transition-all duration-300 overflow-hidden bg-black ${remoteClasses}`}
                 >
-                  <video ref={remoteRef} autoPlay playsInline onClick={(e) => e.stopPropagation()} className="w-full h-full object-cover" />
+                  <video ref={remoteRef} autoPlay playsInline onClick={(e) => e.stopPropagation()} className={remoteVideoClass} />
+                  {remoteIsScreenShare && (
+                    <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full bg-primary/80 text-secondary text-[10px] font-bold backdrop-blur z-10">
+                      <Monitor className="w-3 h-3" /> Screen share
+                    </div>
+                  )}
                   <div className={`absolute inset-x-0 bottom-0 pt-8 pb-1.5 px-2 bg-gradient-to-t from-black/70 to-transparent
                     ${mainView === 'remote' ? 'sm:pt-12 sm:pb-3 sm:px-3' : ''}`}>
                     <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${remoteJoined ? 'bg-green-400' : 'bg-white/30'} ${remoteJoined ? '' : 'animate-pulse'}`} />
-                      <span className={`truncate ${mainView === 'remote' ? 'text-xs sm:text-sm' : 'text-[10px]'} font-semibold`}>{remoteJoined ? otherName : 'Waiting…'}</span>
+                      <span className={`w-2 h-2 rounded-full ${remoteJoined && !remoteLeft ? 'bg-green-400' : 'bg-white/30'} ${remoteJoined && !remoteLeft ? '' : 'animate-pulse'}`} />
+                      <span className={`truncate ${mainView === 'remote' ? 'text-xs sm:text-sm' : 'text-[10px]'} font-semibold`}>
+                        {remoteLeft ? `${otherName} left` : remoteJoined ? otherName : 'Waiting…'}
+                      </span>
                       {connQuality && mainView === 'remote' && status === 'active' && (
                         <span className={`flex items-center gap-1 text-[10px] ml-auto ${qualityColor(connQuality)}`}>{qualityIcon(connQuality)}</span>
                       )}
@@ -1133,6 +1333,20 @@ export default function VideoCallPage() {
                   </div>
                 )}
 
+                {/* Remote left overlay */}
+                {remoteLeft && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 text-center call-waiting-bg">
+                    <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center">
+                      <PhoneOff className="w-8 h-8 text-white/50" />
+                    </div>
+                    <p className="text-white/90 font-semibold text-lg">{otherName} left the call</p>
+                    <p className="text-xs text-white/50 max-w-xs">The other person has disconnected from the interview.</p>
+                    <button onClick={() => endCall(false)} className="mt-4 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
+                      Leave call
+                    </button>
+                  </div>
+                )}
+
                 {/* Screen share badge */}
                 {sharing && (
                   <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary text-secondary text-xs font-bold shadow-lg z-10">
@@ -1155,7 +1369,7 @@ export default function VideoCallPage() {
                 {/* Tap hint (desktop, first join) */}
                 {!isMobile && remoteJoined && controlsShown && (
                   <div className="absolute bottom-24 left-1/2 -translate-x-1/2 text-[10px] text-white/30 transition-opacity duration-500 z-10 pointer-events-none hidden xl:block">
-                    Click the call area to hide controls
+                    Move your mouse to show controls · Click to hide
                   </div>
                 )}
               </>
@@ -1168,45 +1382,43 @@ export default function VideoCallPage() {
                 onClick={(e) => e.stopPropagation()}
                 animate={{ y: controlsShown ? 0 : 110, opacity: controlsShown ? 1 : 0 }}
                 transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-                className={`pointer-events-auto flex items-center gap-1 sm:gap-1.5 rounded-2xl sm:rounded-3xl bg-[#151c2e]/90 backdrop-blur-2xl border border-white/10 px-2 sm:px-3 py-2 shadow-2xl ${controlsShown ? '' : 'pointer-events-none opacity-0'}`}
+                className={`pointer-events-auto flex items-center gap-1 sm:gap-1.5 rounded-2xl sm:rounded-3xl bg-[#151c2e]/90 backdrop-blur-2xl border border-white/10 px-1.5 sm:px-3 py-2 shadow-2xl max-w-[calc(100vw-1.5rem)] overflow-x-auto ${controlsShown ? '' : 'pointer-events-none opacity-0'}`}
               >
-                <button onClick={toggleMic} title={micOn ? 'Mute (M)' : 'Unmute (M)'} aria-label={micOn ? 'Mute' : 'Unmute'} className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 ${micOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}>
-                  {micOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+                <button onClick={toggleMic} title={micOn ? 'Mute (M)' : 'Unmute (M)'} aria-label={micOn ? 'Mute' : 'Unmute'} className={`relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${micOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}>
+                  {micOn ? <Mic className="w-4 h-4 sm:w-5 sm:h-5" /> : <MicOff className="w-4 h-4 sm:w-5 sm:h-5" />}
                 </button>
-                <button onClick={toggleCam} title={camOn ? 'Camera off (V)' : 'Camera on (V)'} aria-label={camOn ? 'Turn camera off' : 'Turn camera on'} className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 ${camOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}>
-                  {camOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                <button onClick={toggleCam} title={camOn ? 'Camera off (V)' : 'Camera on (V)'} aria-label={camOn ? 'Turn camera off' : 'Turn camera on'} className={`relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${camOn ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}`}>
+                  {camOn ? <Video className="w-4 h-4 sm:w-5 sm:h-5" /> : <VideoOff className="w-4 h-4 sm:w-5 sm:h-5" />}
                 </button>
-                {canShareScreen && (
-                  <button onClick={toggleShare} title={sharing ? 'Stop sharing (S)' : 'Share screen (S)'} aria-label="Share screen" className={`relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 ${sharing ? 'bg-primary text-secondary' : 'bg-white/10 hover:bg-white/20 text-white'}`}>
-                    {sharing ? <Monitor className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
-                  </button>
-                )}
+                <button onClick={toggleShare} title={sharing ? 'Stop sharing (S)' : 'Share screen (S)'} aria-label="Share screen" className={`relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 ${sharing ? 'bg-primary text-secondary' : canGetDisplayMedia ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-white/5 text-white/40 cursor-not-allowed'}`}>
+                  {sharing ? <Monitor className="w-4 h-4 sm:w-5 sm:h-5" /> : <MonitorUp className="w-4 h-4 sm:w-5 sm:h-5" />}
+                </button>
 
-                <div className="w-px h-8 bg-white/10 mx-0.5 hidden sm:block" />
+                <div className="w-px h-7 bg-white/10 mx-0.5 shrink-0 hidden sm:block" />
 
                 {isMobile && (
-                  <button onClick={flipCamera} disabled={!camOn} title="Flip camera" aria-label="Flip camera" className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 bg-white/10 hover:bg-white/20 text-white disabled:opacity-40">
-                    <FlipHorizontal2 className="w-5 h-5" />
+                  <button onClick={flipCamera} disabled={!camOn} title="Flip camera" aria-label="Flip camera" className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 bg-white/10 hover:bg-white/20 text-white disabled:opacity-40">
+                    <FlipHorizontal2 className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 )}
-                <button onClick={() => setShowSettings(true)} title="Device settings" aria-label="Device settings" className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 bg-white/10 hover:bg-white/20 text-white">
-                  <Settings className="w-5 h-5" />
+                <button onClick={() => setShowSettings(true)} title="Device settings" aria-label="Device settings" className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 bg-white/10 hover:bg-white/20 text-white">
+                  <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
                 {!isMobile && (
-                  <button onClick={(e) => { e.stopPropagation(); setViewModeSafe(viewMode === 'speaker' ? 'gallery' : 'speaker'); }} title={viewMode === 'speaker' ? 'Gallery view' : 'Speaker view'} aria-label="Toggle view" className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 bg-white/10 hover:bg-white/20 text-white">
-                    {viewMode === 'speaker' ? <LayoutGrid className="w-5 h-5" /> : <Users className="w-5 h-5" />}
+                  <button onClick={(e) => { e.stopPropagation(); setViewModeSafe(viewMode === 'speaker' ? 'gallery' : 'speaker'); }} title={viewMode === 'speaker' ? 'Gallery view' : 'Speaker view'} aria-label="Toggle view" className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 bg-white/10 hover:bg-white/20 text-white">
+                    {viewMode === 'speaker' ? <LayoutGrid className="w-4 h-4 sm:w-5 sm:h-5" /> : <Users className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
                 )}
                 {!isMobile && (
-                  <button onClick={toggleFullscreen} title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Toggle fullscreen" className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center transition-all active:scale-95 bg-white/10 hover:bg-white/20 text-white">
-                    {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
+                  <button onClick={toggleFullscreen} title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Toggle fullscreen" className="relative w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 bg-white/10 hover:bg-white/20 text-white">
+                    {isFullscreen ? <Minimize className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize className="w-4 h-4 sm:w-5 sm:h-5" />}
                   </button>
                 )}
 
-                <div className="w-px h-8 bg-white/10 mx-0.5 hidden sm:block" />
+                <div className="w-px h-7 bg-white/10 mx-0.5 shrink-0 hidden sm:block" />
 
-                <button onClick={() => setShowEndConfirm(true)} title="End call" aria-label="End call" className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center transition-all active:scale-95 bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-900/40">
-                  <PhoneOff className="w-5 h-5 sm:w-6 sm:h-6" />
+                <button onClick={() => setShowEndConfirm(true)} title="End call" aria-label="End call" className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all active:scale-95 shrink-0 bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-900/40">
+                  <PhoneOff className="w-4 h-4 sm:w-6 sm:h-6" />
                 </button>
               </motion.div>
             </div>
@@ -1222,7 +1434,11 @@ export default function VideoCallPage() {
               </div>
               <h1 className="font-display text-2xl font-bold">Call ended</h1>
               <p className="text-white/60 text-sm mt-2">
-                {isAdmin ? 'You can mark the interview as complete so the user unlocks their dashboard.' : 'Thank you for your interview. Once the admin confirms completion, your dashboard will unlock.'}
+                {remoteLeft
+                  ? `${otherName} has left the call.`
+                  : isAdmin
+                    ? 'You can mark the interview as complete so the user unlocks their dashboard.'
+                    : 'Thank you for your interview. Once the admin confirms completion, your dashboard will unlock.'}
               </p>
               <div className="flex flex-col gap-2 mt-6">
                 {isAdmin && (

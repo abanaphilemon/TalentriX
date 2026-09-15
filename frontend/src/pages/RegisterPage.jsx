@@ -50,7 +50,8 @@ export default function RegisterPage() {
       return;
     }
     setSuccess(true);
-    setTimeout(() => navigate('/onboarding', { replace: true }), 800);
+    const isEmployer = res.user?.role === 'employer';
+    setTimeout(() => navigate(isEmployer ? '/dashboard/employer' : '/onboarding', { replace: true }), 800);
   };
 
   const inputCls = (err) =>

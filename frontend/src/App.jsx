@@ -37,6 +37,10 @@ const DASHBOARDS = {
   admin: '/admin',
 };
 
+// Only hubs and job seekers must complete the onboarding + interview flow.
+// Employers skip both and go straight to their dashboard.
+const needsOnboardingFlow = (role) => role === 'hub' || role === 'seeker';
+
 // ── Error boundary: catches render crashes in any child route. ──
 class RouteErrorBoundary extends Component {
   constructor(props) {
@@ -76,7 +80,7 @@ class RouteErrorBoundary extends Component {
 function NotFoundPage() {
   const { user, role } = useAuth();
   const navigate = useNavigate();
-  const home = user && role && DASHBOARDS[role] ? (user.onboardingDone ? DASHBOARDS[role] : '/onboarding') : '/';
+  const home = user && role && DASHBOARDS[role] ? (needsOnboardingFlow(role) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[role]) : '/';
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-hero-gradient">
       <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-8 text-center">
@@ -167,7 +171,7 @@ function RequireRole({ role, children }) {
   if (loading) return null;
   if (!user) return <Navigate to="/" replace />;
 
-  const homeFor = (r) => r === 'admin' ? '/admin' : (user.onboardingDone ? DASHBOARDS[r] || '/' : '/onboarding');
+  const homeFor = (r) => r === 'admin' ? '/admin' : (needsOnboardingFlow(r) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[r] || '/');
 
   if (userRole !== role) {
     return (
@@ -192,10 +196,10 @@ function RequireRole({ role, children }) {
       </div>
     );
   }
-  if (!user.onboardingDone) return <Navigate to="/onboarding" replace />;
+  if (needsOnboardingFlow(role) && !user.onboardingDone) return <Navigate to="/onboarding" replace />;
   if (user.active === false || (user.status && user.status !== 'approved'))
     return <AccountStatus user={user} />;
-  if (!user.interviewDone) return <Navigate to="/interview" replace />;
+  if (needsOnboardingFlow(role) && !user.interviewDone) return <Navigate to="/interview" replace />;
 
   return children;
 }
@@ -207,8 +211,9 @@ function RequireInterview() {
   if (loading) return null;
   if (!user) return <Navigate to="/" replace />;
 
-  // Admins don't go through the interview step.
+  // Admins and employers don't go through the interview step.
   if (role === 'admin') return <Navigate to="/admin" replace />;
+  if (role === 'employer') return <Navigate to="/dashboard/employer" replace />;
   if (!user.onboardingDone) return <Navigate to="/onboarding" replace />;
   if (user.active === false || (user.status && user.status !== 'approved'))
     return <AccountStatus user={user} />;
@@ -223,6 +228,9 @@ function RequireOnboarding() {
 
   if (loading) return null;
   if (!user) return <Navigate to="/" replace />;
+
+  // Employers skip onboarding and go straight to their dashboard.
+  if (role === 'employer') return <Navigate to="/dashboard/employer" replace />;
 
   if (user.onboardingDone) {
     if (user.active === false || (user.status && user.status !== 'approved'))
@@ -264,7 +272,7 @@ function LandingPage() {
 
   useEffect(() => {
     if (user && role && DASHBOARDS[role]) {
-      navigate(user.onboardingDone ? DASHBOARDS[role] : '/onboarding', { replace: true });
+      navigate(needsOnboardingFlow(role) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[role], { replace: true });
     }
   }, [user, role, navigate]);
 
