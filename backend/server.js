@@ -2165,6 +2165,19 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Public ICE/TURN servers for WebRTC signaling ───────────────────────────
+// Any authenticated participant (not just admins) must read the same STUN/TURN
+// configuration so both sides of a call negotiate with identical ICE servers.
+app.get('/api/interview/iceServers', authenticateToken, async (req, res) => {
+  try {
+    const val = await getConfig('iceServers');
+    res.json({ value: val || {} });
+  } catch (error) {
+    console.error('ICE servers get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ── Payment endpoints ──────────────────────────────────────────────────────
 
 // Get chat price for display
