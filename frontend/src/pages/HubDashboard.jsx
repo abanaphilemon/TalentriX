@@ -587,12 +587,23 @@ export default function HubDashboard() {
                         ))}
                       </div>
                     )}
-                    <button
-                      onClick={() => setViewing(s)}
-                      className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-white text-sm font-semibold hover:bg-accent transition-colors"
-                    >
-                      <Eye className="w-3.5 h-3.5" /> View profile
-                    </button>
+                    <div className="mt-auto flex items-center gap-2">
+                      <a
+                        href={`/portfolio/${s.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-secondary text-sm font-bold hover:bg-primary/90 transition-colors"
+                        title="Open public portfolio"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" /> Portfolio
+                      </a>
+                      <button
+                        onClick={() => setViewing(s)}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-white text-sm font-semibold hover:bg-accent transition-colors"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Profile
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -754,7 +765,15 @@ export default function HubDashboard() {
                 <CheckCircle2 className="w-3.5 h-3.5" /> Registered via your link
               </div>
             </div>
-            <div className="p-6 pt-0">
+            <div className="p-6 pt-0 space-y-2">
+              <a
+                href={`/portfolio/${viewing.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" /> View public portfolio
+              </a>
               <button
                 onClick={() => setViewing(null)}
                 className="w-full py-2.5 rounded-xl bg-secondary/5 text-secondary font-semibold hover:bg-secondary/10 transition-colors"
