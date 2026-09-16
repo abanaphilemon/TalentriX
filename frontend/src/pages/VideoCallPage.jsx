@@ -98,7 +98,7 @@ function isRemoteScreenShare(stream) {
 export default function VideoCallPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, adminUser, adminRole, loading } = useAuth();
+  const { user, adminUser, adminRole, role, loading } = useAuth();
 
   const isAdmin = adminRole === 'admin';
   const token = isAdmin ? localStorage.getItem('tbai.adminToken') : localStorage.getItem('tbai.token');
@@ -111,6 +111,7 @@ export default function VideoCallPage() {
 
   const [err, setErr] = useState('');
   const [interview, setInterview] = useState(null);
+  const [roomMode, setRoomMode] = useState(null); // 'interview' (admin meeting) | 'call' (instant chat call)
   const [otherName, setOtherName] = useState(isAdmin ? currentName || 'Admin' : 'Site Administrator');
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -154,6 +155,7 @@ export default function VideoCallPage() {
   const remoteOfferAppliedRef = useRef(false);
   const iceRestartCountRef = useRef(0);
   const cancelledRef = useRef(false);
+  const modeRef = useRef('interview'); // 'interview' | 'call' — read at call time by signal helpers
   const mainViewRef = useRef('remote');
   const viewModeRef = useRef('speaker');
   const facingModeRef = useRef('user');
@@ -363,8 +365,10 @@ export default function VideoCallPage() {
     resetPeerState();
   };
 
+  const signalBase = () => (modeRef.current === 'call' ? `${API_URL}/calls/${id}` : `${API_URL}/interviews/${id}`);
+
   const getSignalState = async () => {
-    const res = await fetch(`${API_URL}/interviews/${id}/signal`, {
+    const res = await fetch(`${signalBase()}/signal`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) throw new Error('Could not reach the signaling server');
@@ -372,7 +376,7 @@ export default function VideoCallPage() {
   };
 
   const postSignal = async (body) => {
-    const res = await fetch(`${API_URL}/interviews/${id}/signal`, {
+    const res = await fetch(`${signalBase()}/signal`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
@@ -382,7 +386,7 @@ export default function VideoCallPage() {
 
   const postIce = async (kind, candidate) => {
     try {
-      await fetch(`${API_URL}/interviews/${id}/ice`, {
+      await fetch(`${signalBase()}/ice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ kind, candidate }),
@@ -768,20 +772,39 @@ export default function VideoCallPage() {
     cancelledRef.current = false;
 
     (async () => {
-      // 1. Load interview context
+      // 0. Detect room type — instant chat calls vs scheduled admin interviews.
+      let roomType = 'interview';
+      let callInfo = null;
       try {
-        const url = isAdmin ? `${API_URL}/admin/interviews` : `${API_URL}/interviews/me`;
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.message || 'Could not load the interview');
+        const cRes = await fetch(`${API_URL}/calls/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (cRes.ok) {
+          roomType = 'call';
+          const cData = await cRes.json();
+          callInfo = cData.call;
+          modeRef.current = 'call';
+          setRoomMode('call');
+          setOtherName(callInfo.partner?.name || callInfo.partner?.id || '');
         }
-        const data = await res.json();
-        const found = (data.interviews || []).find((i) => String(i.id) === String(id));
-        if (!found) throw new Error('Interview not found or has not been accepted yet');
-        if (found.status !== 'accepted') throw new Error('This interview has not been accepted yet. Please wait for the admin to accept.');
-        if (!cancelledRef.current) setInterview(found);
-        if (isAdmin && found.user) setOtherName(found.user.name || 'User');
+      } catch { /* not a call — fall through to interview */ }
+
+      // 1. Load room context (call context is already resolved above)
+      try {
+        if (roomType === 'call') {
+          if (!callInfo) throw new Error('Call not found');
+        } else {
+          const url = isAdmin ? `${API_URL}/admin/interviews` : `${API_URL}/interviews/me`;
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.message || 'Could not load the interview');
+          }
+          const data = await res.json();
+          const found = (data.interviews || []).find((i) => String(i.id) === String(id));
+          if (!found) throw new Error('Interview not found or has not been accepted yet');
+          if (found.status !== 'accepted') throw new Error('This interview has not been accepted yet. Please wait for the admin to accept.');
+          if (!cancelledRef.current) setInterview(found);
+          if (isAdmin && found.user) setOtherName(found.user.name || 'User');
+        }
       } catch (e) {
         if (!cancelledRef.current) { setErr(e.message); updateStatus('error'); }
         return;
@@ -819,7 +842,9 @@ export default function VideoCallPage() {
 
       // 4. Create peer connection
       try {
-        if (isAdmin) {
+        // Admin is the offerer for interviews; the call creator for chat calls.
+        const isCallCreator = roomType === 'call' && !!callInfo?.youAreCreator;
+        if (isAdmin || isCallCreator) {
           await becomeOfferer(stream);
         } else {
           const pc = createPeer(stream);
@@ -1195,7 +1220,7 @@ export default function VideoCallPage() {
       <div className={`h-12 sm:h-14 px-3 sm:px-4 flex items-center justify-between bg-black/40 backdrop-blur border-b border-white/10 shrink-0 z-20 transition-opacity duration-300 ${controlsShown ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
         <div className="flex items-center gap-2 min-w-0">
           <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
-          <span className="font-display font-bold text-sm truncate">Secure interview</span>
+          <span className="font-display font-bold text-sm truncate">{roomMode === 'call' ? 'Secure call' : 'Secure interview'}</span>
           {interview?.status === 'accepted' && interview?.proposedDate && (
             <span className="hidden md:inline-flex items-center gap-1 text-xs text-white/60 ml-1 shrink-0">
               <Clock className="w-3.5 h-3.5" />
@@ -1373,7 +1398,7 @@ export default function VideoCallPage() {
                       <PhoneOff className="w-8 h-8 text-white/50" />
                     </div>
                     <p className="text-white/90 font-semibold text-lg">{otherName} left the call</p>
-                    <p className="text-xs text-white/50 max-w-xs">The other person has disconnected from the interview.</p>
+                    <p className="text-xs text-white/50 max-w-xs">The other person has disconnected from the {roomMode === 'call' ? 'call' : 'interview'}.</p>
                     <button onClick={() => endCall(false)} className="mt-4 px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
                       Leave call
                     </button>
@@ -1471,14 +1496,16 @@ export default function VideoCallPage() {
                   ? `${otherName} has left the call.`
                   : isAdmin
                     ? 'You can mark the interview as complete so the user unlocks their dashboard.'
-                    : 'Thank you for your interview. Once the admin confirms completion, your dashboard will unlock.'}
+                    : roomMode === 'call'
+                      ? `You're no longer connected to ${otherName}.`
+                      : 'Thank you for your interview. Once the admin confirms completion, your dashboard will unlock.'}
               </p>
               <div className="flex flex-col gap-2 mt-6">
                 {isAdmin && (
                   <button onClick={() => endCall(true)} className="btn-primary w-full justify-center">Mark interview complete &amp; unlock dashboard</button>
                 )}
-                <button onClick={() => navigate(isAdmin ? '/admin' : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
-                  <ArrowLeft className="w-4 h-4" /> {isAdmin ? 'Back to admin panel' : 'Back to interview page'}
+                <button onClick={() => navigate(isAdmin ? '/admin' : roomMode === 'call' ? (role === 'seeker' ? '/dashboard/seeker' : '/dashboard/employer') : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
+                  <ArrowLeft className="w-4 h-4" /> {isAdmin ? 'Back to admin panel' : roomMode === 'call' ? 'Back to chat' : 'Back to interview page'}
                 </button>
               </div>
             </div>
@@ -1494,7 +1521,7 @@ export default function VideoCallPage() {
               </div>
               <h1 className="font-display text-2xl font-bold">Could not start the call</h1>
               <p className="text-white/60 text-sm mt-2">{err}</p>
-              <button onClick={() => navigate(isAdmin ? '/admin' : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors mt-6">
+              <button onClick={() => navigate(isAdmin ? '/admin' : roomMode === 'call' ? (role === 'seeker' ? '/dashboard/seeker' : '/dashboard/employer') : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors mt-6">
                 <ArrowLeft className="w-4 h-4" /> Go back
               </button>
             </div>

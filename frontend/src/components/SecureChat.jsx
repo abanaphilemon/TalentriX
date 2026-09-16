@@ -7,6 +7,7 @@ import {
   MessagesSquare,
   ShieldCheck,
   ChevronLeft,
+  Video,
 } from 'lucide-react';
 import { ensureKeys, decryptMessage, encryptMessage, formatWhen } from '../lib/e2e.js';
 
@@ -50,6 +51,7 @@ export default function SecureChat({ open, onClose, seedId }) {
   const [sending, setSending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [calling, setCalling] = useState(false);
   const [lf, setLf] = useState({ email: '', password: '', role: 'employer' });
   const [lfBusy, setLfBusy] = useState(false);
   const [lfError, setLfError] = useState('');
@@ -250,6 +252,37 @@ async (partnerId, showBusy) => {
 
   const openThread = (id) => readThread(id, true);
 
+  // Join instantly — hop on a private video call with the person you're chatting with.
+  const startCall = async () => {
+    if (!active?.partner?.id || calling) return;
+    setCalling(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/calls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ to: active.partner.id }),
+      });
+      const d = await res.json();
+      if (res.status === 402) {
+        setError(d.message || 'Payment required to start a call.');
+        setTimeout(() => setError(''), 5000);
+        return;
+      }
+      if (!res.ok) {
+        setError(d.message || 'Could not start the call.');
+        setTimeout(() => setError(''), 4000);
+        return;
+      }
+      window.open(`/call/${d.call.id}`, '_blank');
+    } catch {
+      setError('Could not start the call. Please try again.');
+      setTimeout(() => setError(''), 4000);
+    } finally {
+      setCalling(false);
+    }
+  };
+
   if (!open) return null;
 
   return (
@@ -413,6 +446,15 @@ async (partnerId, showBusy) => {
                         {active.partner.company || active.partner.title || active.partner.role}
                       </div>
                     </div>
+                    <button
+                      onClick={startCall}
+                      disabled={calling}
+                      title="Start a video call"
+                      aria-label="Start a video call"
+                      className="ml-auto w-9 h-9 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 hover:text-secondary flex items-center justify-center transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      {calling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
+                    </button>
                   </div>
 
                   {/* messages */}

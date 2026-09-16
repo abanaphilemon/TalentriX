@@ -1815,6 +1815,31 @@ const ChatPayment = mongoose.model('ChatPayment', new mongoose.Schema({
   paidAt: { type: Date },
 }));
 
+// Instant attacker-free chat calls between an employer and a job seeker.
+// Created on demand from the secure chat (no scheduling), reusing the same
+// polled-signaling WebRTC model as admin interviews.
+const Call = mongoose.model('Call', new mongoose.Schema({
+  creatorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  participantId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  status: { type: String, enum: ['open', 'active', 'ended'], default: 'open' },
+  createdAt: { type: Date, default: Date.now },
+  endedAt: { type: Date },
+}));
+
+// WebRTC signaling payloads for chat calls (offer/answer + ICE candidates).
+const CallSignal = mongoose.model('CallSignal', new mongoose.Schema({
+  callId: { type: mongoose.Schema.Types.ObjectId, ref: 'Call', required: true },
+  kind: { type: String, enum: ['offer', 'answer'], required: true },
+  sdp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+}));
+const CallIceCandidate = mongoose.model('CallIceCandidate', new mongoose.Schema({
+  callId: { type: mongoose.Schema.Types.ObjectId, ref: 'Call', required: true },
+  kind: { type: String, enum: ['offer', 'answer'], required: true },
+  candidate: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+}));
+
 async function getConfig(key) {
   const doc = await SiteConfig.findOne({ key });
   return doc ? doc.value : null;
@@ -1967,6 +1992,15 @@ function publicInterview(i) {
 // Both the interview owner and any admin may operate on an interview.
 function interviewAccessOk(req, interview) {
   return String(interview.userId) === String(req.user.userId) || req.user.role === 'admin';
+}
+
+// Both call participants and any admin may operate on a chat call.
+function callAccessOk(req, call) {
+  return (
+    String(call.creatorId) === String(req.user.userId) ||
+    String(call.participantId) === String(req.user.userId) ||
+    req.user.role === 'admin'
+  );
 }
 
 // ── Interview email drafts ──────────────────────────────────────────────────
@@ -2356,6 +2390,154 @@ app.post('/api/interviews/:id/ice', authenticateToken, async (req, res) => {
     res.status(201).json({ ok: true });
   } catch (error) {
     console.error('Ice post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Instant chat calls (employer ↔ job seeker) ──────────────────────────────────
+// Created on demand from the secure chat — no scheduling. Same polled WebRTC
+// signaling model as admin interviews; the caller is the offerer.
+
+// Create (or reuse) an open call for the current user and the recipient.
+app.post('/api/calls', authenticateToken, async (req, res) => {
+  try {
+    const { to } = req.body || {};
+    if (!to) return res.status(400).json({ message: 'to required' });
+    const me = await User.findById(req.user.userId);
+    const other = await User.findById(to);
+    if (!me || !other) return res.status(404).json({ message: 'User not found' });
+    if (!chatPairOk(me, other)) {
+      return res.status(403).json({ message: 'Calls are available between employers and job seekers only' });
+    }
+    // Same payment gate as chat messages: an employer must have paid to call a seeker.
+    if (me.role === 'employer' && other.role === 'seeker') {
+      const hasPaid = await ChatPayment.findOne({ employerId: me._id, seekerId: other._id, status: 'paid' });
+      if (!hasPaid) return res.status(402).json({ message: 'Payment required', code: 'PAYMENT_REQUIRED' });
+    }
+    // Reuse an existing open/active call for this pair so both sides join the same room.
+    let call = await Call.findOne({
+      status: { $in: ['open', 'active'] },
+      $or: [
+        { creatorId: me._id, participantId: other._id },
+        { creatorId: other._id, participantId: me._id },
+      ],
+    });
+    if (!call) {
+      call = await Call.create({ creatorId: me._id, participantId: other._id });
+    }
+    res.status(201).json({
+      call: {
+        id: call._id,
+        status: call.status,
+        createdAt: call.createdAt,
+        partner: { id: other._id, name: other.name, role: other.role },
+        youAreCreator: String(call.creatorId) === String(me._id),
+      },
+    });
+  } catch (error) {
+    console.error('Call create error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get a call's context (participants + whether the requester created it).
+app.get('/api/calls/:id', authenticateToken, async (req, res) => {
+  try {
+    const call = await Call.findById(req.params.id);
+    if (!call) return res.status(404).json({ message: 'Call not found' });
+    if (!callAccessOk(req, call)) return res.status(403).json({ message: 'Not allowed' });
+    const meId = String(req.user.userId);
+    const partnerId = String(call.creatorId) === meId ? call.participantId : call.creatorId;
+    const partner = await User.findById(partnerId);
+    res.json({
+      call: {
+        id: call._id,
+        status: call.status,
+        createdAt: call.createdAt,
+        partner: partner
+          ? { id: partner._id, name: partner.name, role: partner.role }
+          : { id: partnerId, name: 'User' },
+        youAreCreator: String(call.creatorId) === meId,
+      },
+    });
+  } catch (error) {
+    console.error('Call get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/calls/:id/signal', authenticateToken, async (req, res) => {
+  try {
+    const call = await Call.findById(req.params.id);
+    if (!call) return res.status(404).json({ message: 'Call not found' });
+    if (!callAccessOk(req, call)) return res.status(403).json({ message: 'Not allowed' });
+    if (call.status === 'ended') return res.status(400).json({ message: 'This call is not active' });
+    const signals = await CallSignal.find({ callId: call._id }).sort({ createdAt: 1 });
+    const ices = await CallIceCandidate.find({ callId: call._id }).sort({ createdAt: 1 });
+    res.json({
+      offer: signals.find((s) => s.kind === 'offer')?.sdp || '',
+      answer: signals.find((s) => s.kind === 'answer')?.sdp || '',
+      offerCandidates: ices.filter((c) => c.kind === 'offer').map((c) => c.candidate),
+      answerCandidates: ices.filter((c) => c.kind === 'answer').map((c) => c.candidate),
+    });
+  } catch (error) {
+    console.error('Call signal get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/calls/:id/signal', authenticateToken, async (req, res) => {
+  try {
+    const call = await Call.findById(req.params.id);
+    if (!call) return res.status(404).json({ message: 'Call not found' });
+    if (!callAccessOk(req, call)) return res.status(403).json({ message: 'Not allowed' });
+    const { kind, sdp } = req.body || {};
+    if (!['offer', 'answer'].includes(kind) || !sdp) {
+      return res.status(400).json({ message: 'Missing signal payload' });
+    }
+    // Keep one offer + one answer per call; a fresh offer clears the old answer.
+    await CallSignal.deleteMany({ callId: call._id, kind });
+    if (kind === 'offer') {
+      await CallSignal.deleteMany({ callId: call._id, kind: 'answer' });
+    }
+    const sig = await CallSignal.create({ callId: call._id, kind, sdp });
+    res.status(201).json({ signal: { id: sig._id, kind: sig.kind } });
+  } catch (error) {
+    console.error('Call signal post error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/calls/:id/ice', authenticateToken, async (req, res) => {
+  try {
+    const call = await Call.findById(req.params.id);
+    if (!call) return res.status(404).json({ message: 'Call not found' });
+    if (!callAccessOk(req, call)) return res.status(403).json({ message: 'Not allowed' });
+    const ices = await CallIceCandidate.find({ callId: call._id }).sort({ createdAt: 1 });
+    res.json({
+      offerCandidates: ices.filter((c) => c.kind === 'offer').map((c) => c.candidate),
+      answerCandidates: ices.filter((c) => c.kind === 'answer').map((c) => c.candidate),
+    });
+  } catch (error) {
+    console.error('Call ice get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/calls/:id/ice', authenticateToken, async (req, res) => {
+  try {
+    const call = await Call.findById(req.params.id);
+    if (!call) return res.status(404).json({ message: 'Call not found' });
+    if (!callAccessOk(req, call)) return res.status(403).json({ message: 'Not allowed' });
+    const { kind, candidate } = req.body || {};
+    if (!['offer', 'answer'].includes(kind) || !candidate) {
+      return res.status(400).json({ message: 'Missing ICE candidate' });
+    }
+    if (candidate.length > 20000) return res.status(413).json({ message: 'Candidate too large' });
+    await CallIceCandidate.create({ callId: call._id, kind, candidate });
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    console.error('Call ice post error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
