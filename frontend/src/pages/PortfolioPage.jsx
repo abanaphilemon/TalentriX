@@ -127,6 +127,11 @@ export default function PortfolioPage() {
     if (me?.role === 'employer' && String(me.id) !== String(id) && !paid) {
       setPayMsg('');
       setPayModal(true);
+      // Re-fetch pricing every time the modal opens so admin-side changes show up.
+      fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setPayPrice(d))
+        .catch(() => {});
       return;
     }
     setChatOpen(true);
@@ -162,6 +167,7 @@ export default function PortfolioPage() {
         return;
       }
       if (d.checkoutUrl) {
+        sessionStorage.setItem('tbai.pendingSeeker', JSON.stringify({ id, name: name || p?.name || 'this job seeker' }));
         window.location.href = d.checkoutUrl;
         return;
       }

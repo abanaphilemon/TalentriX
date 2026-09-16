@@ -2564,11 +2564,12 @@ app.get('/api/interview/iceServers', authenticateToken, async (req, res) => {
 app.get('/api/payment/price', authenticateToken, async (req, res) => {
   try {
     const cfg = await getConfig('chatPricing');
+    res.set('Cache-Control', 'no-store');
     res.json({
-      amount: cfg?.amount || 5000,
-      vatRate: cfg?.vatRate || 0.075,
-      serviceCharge: cfg?.serviceCharge || 100,
-      currency: cfg?.currency || 'NGN',
+      amount: cfg?.amount ?? 5000,
+      vatRate: cfg?.vatRate ?? 0.075,
+      serviceCharge: cfg?.serviceCharge ?? 100,
+      currency: cfg?.currency ?? 'NGN',
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -2584,6 +2585,7 @@ app.get('/api/payment/check/:seekerId', authenticateToken, async (req, res) => {
       seekerId: req.params.seekerId,
       status: 'paid',
     });
+    res.set('Cache-Control', 'no-store');
     res.json({ paid: !!existing });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });
@@ -2608,9 +2610,9 @@ app.post('/api/payment/init', authenticateToken, async (req, res) => {
       return res.status(503).json({ message: 'Payment not configured. Contact admin.' });
     }
     const pricing = await getConfig('chatPricing');
-    const base = pricing?.amount || 5000;
-    const vatRate = pricing?.vatRate || 0.075;
-    const serviceCharge = pricing?.serviceCharge || 100;
+    const base = pricing?.amount ?? 5000;
+    const vatRate = pricing?.vatRate ?? 0.075;
+    const serviceCharge = pricing?.serviceCharge ?? 100;
     const total = Math.round(base + base * vatRate + serviceCharge);
 
     const employer = await User.findById(req.user.userId);
@@ -2630,7 +2632,7 @@ app.post('/api/payment/init', authenticateToken, async (req, res) => {
     if (!monnifyAuth?.token) return res.status(503).json({ message: 'Could not connect to payment provider.' });
     const { token: monoToken, baseUrl } = monnifyAuth;
 
-    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/employer?payment=callback`;
+    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/dashboard/employer?payment=callback&seeker=${seekerId}`;
 
     const monoRes = await fetch(`${baseUrl}/api/v1/merchant/transactions/init-transaction`, {
       method: 'POST',
@@ -2739,6 +2741,7 @@ app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
     const payments = await ChatPayment.find({ employerId: req.user.userId, status: 'paid' })
       .select('seekerId amount paidAt')
       .lean();
+    res.set('Cache-Control', 'no-store');
     res.json({ payments });
   } catch (error) {
     res.status(500).json({ message: 'Server error' });

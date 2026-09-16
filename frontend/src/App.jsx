@@ -272,7 +272,9 @@ function LandingPage() {
 
   useEffect(() => {
     if (user && role && DASHBOARDS[role]) {
-      navigate(needsOnboardingFlow(role) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[role], { replace: true });
+      if (user.status === 'approved' && user.active !== false) {
+        navigate(needsOnboardingFlow(role) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[role], { replace: true });
+      }
     }
   }, [user, role, navigate]);
 

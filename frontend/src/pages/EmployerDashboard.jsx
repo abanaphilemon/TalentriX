@@ -245,25 +245,39 @@ export default function EmployerDashboard() {
     } catch { /* ignore */ }
   };
 
-  const handlePaymentCallback = () => {
+  const handlePaymentCallback = async () => {
     const params = new URLSearchParams(window.location.search);
-    const payRef = params.get('paymentRef');
+    // Monnify appends paymentReference; fall back to paymentRef for manual/test callbacks.
+    const payRef = params.get('paymentReference') || params.get('paymentRef');
     if (!payRef) return;
-    // Verify payment after redirect from Monnify
-    fetch(`${API_URL}/payment/verify/${payRef}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.paid) {
-          loadPaymentInfo();
-          setPayMsg('Payment confirmed! You can now chat with this seeker.');
-          setTimeout(() => setPayMsg(''), 4000);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        // Clean URL
-        window.history.replaceState({}, '', window.location.pathname);
-      });
+    const seekerId = params.get('seeker');
+    let pendingSeeker = null;
+    try {
+      pendingSeeker = JSON.parse(sessionStorage.getItem('tbai.pendingSeeker') || 'null');
+    } catch { /* ignore */ }
+    try {
+      const res = await fetch(`${API_URL}/payment/verify/${payRef}`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (d.paid) {
+        loadPaymentInfo();
+        const target = seekerId || pendingSeeker?.id;
+        setPayMsg(target
+          ? `Payment confirmed! Opening chat with ${pendingSeeker?.name || 'this job seeker'}…`
+          : 'Payment confirmed! You can now chat with this job seeker.');
+        // Open the chat right away for the seeker that was just unlocked.
+        if (target) openChat(target, true);
+        setTimeout(() => setPayMsg(''), 5000);
+      } else {
+        setPayMsg('Payment not confirmed yet. If you were charged, contact support.');
+        setTimeout(() => setPayMsg(''), 6000);
+      }
+    } catch {
+      setPayMsg('Could not confirm payment. Please contact support.');
+    } finally {
+      sessionStorage.removeItem('tbai.pendingSeeker');
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   };
 
   const initiatePayment = async (seeker) => {
@@ -283,6 +297,7 @@ export default function EmployerDashboard() {
         return;
       }
       if (d.checkoutUrl) {
+        sessionStorage.setItem('tbai.pendingSeeker', JSON.stringify({ id: seeker.id, name: seeker.name }));
         window.location.href = d.checkoutUrl;
         return;
       }
@@ -294,17 +309,26 @@ export default function EmployerDashboard() {
     }
   };
 
-  const openChat = (seed) => {
+  const openChat = (seed, force = false) => {
     // Payment gate: if seeding a specific seeker, check if paid
-    if (seed && !paidSeekers.has(seed)) {
+    if (!force && seed && !paidSeekers.has(seed)) {
       const seeker = seekers.find((s) => s.id === seed);
       if (seeker) {
         setPayModal(seeker);
+        // Re-fetch pricing every time the modal opens so admin-side changes show up.
+        refreshPrice();
         return;
       }
     }
     setChatSeed(seed || null);
     setChatOpen(true);
+  };
+
+  const refreshPrice = async () => {
+    try {
+      const res = await fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setPayPrice(await res.json());
+    } catch { /* ignore */ }
   };
 
   const closeChat = async () => {
