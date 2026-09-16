@@ -21,11 +21,13 @@ import {
   ExternalLink,
   Tag,
   Search,
+  Headset,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import { readImageFile } from '../lib/image.js';
 import NotificationCenter from '../components/NotificationCenter.jsx';
+import SupportCenter from '../components/SupportCenter.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -168,6 +170,7 @@ export default function HubDashboard() {
   const [orgMsg, setOrgMsg] = useState('');
   const [orgReading, setOrgReading] = useState(false);
   const logoRef = useRef(null);
+  const [supportOpen, setSupportOpen] = useState(false);
 
   const token = localStorage.getItem('tbai.token');
 
@@ -313,6 +316,14 @@ export default function HubDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <NotificationCenter token={token} />
+            <button
+              onClick={() => setSupportOpen(true)}
+              className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-secondary/5 hover:bg-secondary/10 transition-colors"
+              title="Help & Support"
+              aria-label="Help & Support"
+            >
+              <Headset className="w-4 h-4 text-secondary" />
+            </button>
             <span className="text-sm text-secondary/60 hidden sm:inline">
               {user?.name || user?.email}
             </span>
@@ -873,6 +884,8 @@ export default function HubDashboard() {
           </div>
         </div>
       )}
+
+      <SupportCenter token={token} userRole="hub" open={supportOpen} onClose={() => setSupportOpen(false)} />
     </div>
   );
 }

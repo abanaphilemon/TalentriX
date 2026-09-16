@@ -29,12 +29,14 @@ import {
   Phone,
   Github,
   Globe,
+  Headset,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import ChatClosureModal from '../components/ChatClosureModal.jsx';
 import NotificationCenter from '../components/NotificationCenter.jsx';
+import SupportCenter from '../components/SupportCenter.jsx';
 import EmployerRequestTalent from './EmployerRequestTalent.jsx';
 import { readImageFile } from '../lib/image.js';
 
@@ -100,6 +102,14 @@ export default function EmployerDashboard() {
     closureOpenRef.current = closureOpen;
   }, [closureOpen]);
 
+  const [supportOpen, setSupportOpen] = useState(false);
+  const [reviewables, setReviewables] = useState({}); // { [seekerId]: { rating, review } | null }
+  const [reviewModal, setReviewModal] = useState(null); // seeker object (with extra fields) or null
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewSaving, setReviewSaving] = useState(false);
+  const [reviewMsg, setReviewMsg] = useState('');
+
   const token = localStorage.getItem('tbai.token');
 
   const loadProfile = async () => {
@@ -163,6 +173,7 @@ export default function EmployerDashboard() {
     loadSeekers();
     loadHubs();
     loadPaymentInfo();
+    loadReviewables();
     handlePaymentCallback();
     handleChatReturn();
     loadPendingClosures();
@@ -262,6 +273,58 @@ export default function EmployerDashboard() {
         setPaidSeekers(new Set((d.payments || []).map((p) => p.seekerId)));
       }
     } catch { /* ignore */ }
+  };
+
+  const loadReviewables = async () => {
+    try {
+      const res = await fetch(`${API_URL}/employer/reviewables`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const map = {};
+        for (const item of d.items || []) {
+          map[String(item.seekerId)] = item.review || null;
+        }
+        setReviewables(map);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const openReviewModal = (seeker) => {
+    const existing = reviewables[String(seeker.id)];
+    setReviewModal(seeker);
+    setReviewRating(existing?.rating || 0);
+    setReviewText(existing?.review || '');
+    setReviewMsg('');
+  };
+
+  const submitReview = async () => {
+    if (!reviewModal || reviewRating < 1) {
+      setReviewMsg('Pick a star rating (1–5) to submit.');
+      return;
+    }
+    setReviewSaving(true);
+    setReviewMsg('');
+    try {
+      const res = await fetch(`${API_URL}/seekers/${reviewModal.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rating: reviewRating, review: reviewText }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setReviewMsg(d.message || 'Could not save review.');
+        return;
+      }
+      setReviewables((prev) => ({ ...prev, [String(reviewModal.id)]: { rating: d.review.rating, review: d.review.review } }));
+      setReviewModal(null);
+      loadSeekers();
+    } catch {
+      setReviewMsg('Network error. Try again.');
+    } finally {
+      setReviewSaving(false);
+    }
   };
 
   const handlePaymentCallback = async () => {
@@ -468,6 +531,14 @@ export default function EmployerDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <NotificationCenter token={token} />
+            <button
+              onClick={() => setSupportOpen(true)}
+              className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-secondary/5 hover:bg-secondary/10 transition-colors"
+              title="Help & Support"
+              aria-label="Help & Support"
+            >
+              <Headset className="w-4 h-4 text-secondary" />
+            </button>
             <button
               onClick={() => openChat(null)}
               className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"
@@ -819,6 +890,16 @@ export default function EmployerDashboard() {
                         >
                           <BadgeCheck className="w-3.5 h-3.5" /> Portfolio
                         </a>
+                        {reviewables[String(s.id)] !== undefined && (
+                          <button
+                            onClick={() => openReviewModal(s)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-primary/30 text-primary text-sm font-bold hover:bg-primary/10 transition-colors"
+                            title={reviewables[String(s.id)] ? 'Edit your review' : 'Leave a review'}
+                          >
+                            <Star className="w-3.5 h-3.5 fill-primary text-primary" />
+                            {reviewables[String(s.id)] ? 'Reviewed' : 'Review'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setViewing(s)}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary text-white text-sm font-semibold hover:bg-accent transition-colors"
@@ -1134,6 +1215,93 @@ export default function EmployerDashboard() {
           </div>
         </div>
       )}
+
+      {/* Review modal */}
+      {reviewModal && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-secondary/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-pop-in">
+            <div className="bg-secondary text-white p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <Star className="w-5 h-5 text-secondary fill-primary" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold">{reviewables[String(reviewModal.id)] ? 'Edit your review' : 'Review this talent'}</h3>
+                  <p className="text-white/60 text-xs">Your review shows on {reviewModal.name?.split(' ')[0]}'s public portfolio.</p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
+                  <span className="font-display font-bold text-secondary text-sm">
+                    {reviewModal.name?.split(' ').map((p) => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <div className="font-semibold text-secondary">{reviewModal.name}</div>
+                  {reviewModal.title && <div className="text-xs text-secondary/50">{reviewModal.title}</div>}
+                </div>
+              </div>
+
+              <label className="block text-xs font-semibold text-secondary/70 mb-2">Your rating</label>
+              <div className="flex items-center gap-1.5 mb-5">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setReviewRating(i)}
+                    className="group p-1"
+                    aria-label={`${i} star${i > 1 ? 's' : ''}`}
+                  >
+                    <Star
+                      className={`w-8 h-8 transition-transform group-hover:scale-110 ${
+                        i <= reviewRating ? 'fill-primary text-primary' : 'text-secondary/20 hover:text-secondary/40'
+                      }`}
+                    />
+                  </button>
+                ))}
+              </div>
+
+              <label className="block text-xs font-semibold text-secondary/70 mb-1">Your review (optional)</label>
+              <textarea
+                value={reviewText}
+                onChange={(e) => setReviewText(e.target.value)}
+                maxLength={1000}
+                rows={4}
+                placeholder="How was working with them?"
+                className="w-full px-4 py-3 rounded-xl bg-secondary/5 border border-secondary/10 focus:border-primary/60 focus:outline-none text-secondary text-sm mb-5 resize-none"
+              />
+
+              {reviewMsg && (
+                <div className="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {reviewMsg}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setReviewModal(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-secondary/5 text-secondary font-semibold hover:bg-secondary/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitReview}
+                  disabled={reviewSaving}
+                  className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-secondary font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                >
+                  {reviewSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Star className="w-4 h-4 fill-primary" />}
+                  {reviewables[String(reviewModal.id)] ? 'Update review' : 'Submit review'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SupportCenter token={token} userRole="employer" open={supportOpen} onClose={() => setSupportOpen(false)} />
     </div>
   );
 }

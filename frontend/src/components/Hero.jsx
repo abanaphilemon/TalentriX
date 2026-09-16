@@ -138,21 +138,21 @@ export default function Hero() {
               </Suspense>
             </div>
 
-            {/* Floating "AI Match" badge */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.8 }}
-              className="absolute -bottom-6 -left-6 glass rounded-2xl p-4 shadow-xl hidden sm:flex items-center gap-3"
-            >
-              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-secondary" />
-              </div>
-              <div>
-                <div className="text-sm font-bold text-secondary">AI Match</div>
-                <div className="text-xs text-secondary/60">Live now</div>
-              </div>
-            </motion.div>
+{/* Floating "Verified" badge */}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.8 }}
+                  className="absolute -bottom-6 -left-6 glass rounded-2xl p-4 shadow-xl hidden sm:flex items-center gap-3"
+                >
+                  <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-secondary" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-secondary">{hero.badgeCardTitle || 'Verified Talent'}</div>
+                    <div className="text-xs text-secondary/60">{hero.badgeCardSub || 'Approved & interviewed'}</div>
+                  </div>
+                </motion.div>
           </div>
         </div>
       </div>

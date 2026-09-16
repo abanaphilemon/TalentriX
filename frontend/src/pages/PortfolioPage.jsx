@@ -101,6 +101,7 @@ export default function PortfolioPage() {
   const [payPrice, setPayPrice] = useState(null);
   const [payMsg, setPayMsg] = useState('');
   const [paid, setPaid] = useState(false);
+  const [reviews, setReviews] = useState([]);
   const token = typeof window !== 'undefined' ? localStorage.getItem('tbai.token') : null;
   const viewerRole = typeof window !== 'undefined' ? localStorage.getItem('tbai.role') : null;
 
@@ -212,6 +213,12 @@ export default function PortfolioPage() {
       .then((d) => active && setP(d.portfolio))
       .catch(() => active && setNotFound(true))
       .finally(() => active && setLoading(false));
+    fetch(`${API_URL}/seekers/${id}/reviews`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active) setReviews((d && d.reviews) || []);
+      })
+      .catch(() => {});
     return () => {
       active = false;
     };
@@ -714,6 +721,38 @@ export default function PortfolioPage() {
                 </p>
               )}
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* ===== Talent reviews (written by employers who unlocked this talent) ===== */}
+      {reviews.length > 0 && (
+        <section className="max-w-5xl mx-auto px-6 pb-16 animate-fade-up">
+          <SectionLabel icon={Star}>What employers say</SectionLabel>
+          <div className="grid md:grid-cols-2 gap-4">
+            {reviews.map((r) => (
+              <article key={String(r.id)} className="bg-white rounded-2xl border border-secondary/10 p-6 shadow-sm">
+                <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                  <div className="flex items-center gap-1">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <Star key={i} className={`w-4 h-4 ${i <= r.rating ? 'fill-primary text-primary' : 'text-secondary/20'}`} />
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-secondary/50">
+                    {new Date(r.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                  </span>
+                </div>
+                {r.review ? (
+                  <p className="text-secondary/75 leading-relaxed text-sm whitespace-pre-line">“{r.review}”</p>
+                ) : (
+                  <p className="text-secondary/40 text-sm italic">Rated without a written review.</p>
+                )}
+                <div className="mt-3 pt-3 border-t border-secondary/5 flex items-center gap-2 text-xs font-bold text-secondary">
+                  <BadgeCheck className="w-3.5 h-3.5 text-primary" />
+                  {r.employerName}
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       )}

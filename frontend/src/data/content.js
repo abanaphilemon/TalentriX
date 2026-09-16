@@ -12,9 +12,9 @@ export const navLinks = [
 ];
 
 export const heroStats = [
-  { value: '50K+', label: 'Talent Matches' },
-  { value: '92%', label: 'Placement Success' },
-  { value: '1,200+', label: 'Partner Companies' },
+  { value: '100%', label: 'Vetted & Interviewed' },
+  { value: 'E2E', label: 'Encrypted Messaging' },
+  { value: 'Live', label: 'Public Portfolios' },
 ];
 
 // 6 collaborators — 2 rows x 3 cols

@@ -257,18 +257,18 @@ export default function AuthPage() {
                       ? [
                           'Generate a unique registration link',
                           'Track sign-ups in real time',
-                          'AI-curated profiles from your pool',
+                          'Endorse & rate talent in your pool',
                         ]
                       : role === 'seeker'
                       ? [
-                          'Get matched in days, not months',
-                          'Your profile seen by 1,200+ companies',
+                          'Build a polished public portfolio',
+                          'Approved & interviewed by our team',
                           'Privacy-first — you control who sees what',
                         ]
                       : [
-                          'Pre-vetted candidates, ranked by fit',
-                          'Cut time-to-hire by 80%',
-                          'Bias-audited AI recommendations',
+                          'Pre-vetted candidates, ranked by skill fit',
+                          'Secure E2E encrypted chat',
+                          'Built-in video calls — no extra tools',
                         ]
                     ).map((b) => (
                       <li key={b} className="flex items-start gap-2 text-white/80">

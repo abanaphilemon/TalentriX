@@ -31,9 +31,11 @@ import {
   MapPin,
   Lightbulb,
   MessageSquare,
+  Headset,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import NotificationCenter from '../components/NotificationCenter.jsx';
+import SupportCenter from '../components/SupportCenter.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import { ensureKeys } from '../lib/e2e.js';
@@ -339,6 +341,7 @@ export default function SeekerDashboard() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSeed, setChatSeed] = useState(null);
   const [unread, setUnread] = useState(0);
+  const [supportOpen, setSupportOpen] = useState(false);
 
   const token = localStorage.getItem('tbai.token');
 
@@ -636,6 +639,14 @@ export default function SeekerDashboard() {
           </div>
           <div className="flex items-center gap-3">
             <NotificationCenter token={token} />
+            <button
+              onClick={() => setSupportOpen(true)}
+              className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-secondary/5 hover:bg-secondary/10 transition-colors"
+              title="Help & Support"
+              aria-label="Help & Support"
+            >
+              <Headset className="w-4 h-4 text-secondary" />
+            </button>
             <button
               onClick={() => setChatOpen(true)}
               className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"
@@ -1580,6 +1591,8 @@ export default function SeekerDashboard() {
           </div>
         </div>
       )}
+
+      <SupportCenter token={token} userRole="seeker" open={supportOpen} onClose={() => setSupportOpen(false)} />
     </div>
   );
 }

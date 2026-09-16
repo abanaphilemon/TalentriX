@@ -34,6 +34,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import { readImageFile } from '../lib/image.js';
+import SupportManager from '../components/SupportManager.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const ADMIN_TOKEN_KEY = 'tbai.adminToken';
@@ -90,6 +91,7 @@ const SECTION_GROUPS = [
     items: [
       { id: 'users', label: 'Users', desc: 'Approve, reject, deactivate or remove accounts.', special: 'users' },
       { id: 'interviews', label: 'Onboarding Interviews', desc: 'Approve interview times, join calls, mark complete.', special: 'interviews' },
+      { id: 'support', label: 'Support Tickets', desc: 'Reply to hub, seeker and employer tickets.', special: 'support' },
     ],
   },
   {
@@ -422,6 +424,9 @@ export default function AdminDashboard() {
   const [interviewStatusFilter, setInterviewStatusFilter] = useState('all');
   const [interviewsPendingCount, setInterviewsPendingCount] = useState(0);
 
+  // Support tickets
+  const [supportOpenCount, setSupportOpenCount] = useState(0);
+
   const token = localStorage.getItem(ADMIN_TOKEN_KEY);
   const current = content[section];
 
@@ -556,6 +561,49 @@ export default function AdminDashboard() {
     })();
     return () => {
       active = false;
+    };
+  }, [token]);
+
+  // Keep the pending-interview badge count fresh even when the section is closed.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/admin/interviews?status=proposed`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active) setInterviewsPendingCount(data.pendingCount || 0);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token]);
+
+  // Keep the open-support-ticket badge count fresh even when the section is closed.
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${API_URL}/admin/support/tickets?status=open`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active) setSupportOpenCount(data.openCount || 0);
+      } catch {
+        // ignore
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 60000);
+    return () => {
+      active = false;
+      clearInterval(iv);
     };
   }, [token]);
 
@@ -848,6 +896,7 @@ export default function AdminDashboard() {
                       const isReviews = s.id === 'reviews';
                       const isUsers = s.id === 'users';
                       const isInterviews = s.id === 'interviews';
+                      const isSupport = s.id === 'support';
                       return (
                         <button
                           key={s.id}
@@ -873,6 +922,11 @@ export default function AdminDashboard() {
                                 {interviewsPendingCount} to schedule
                               </span>
                             )}
+                            {isSupport && supportOpenCount > 0 && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-white/25' : 'bg-amber-100 text-amber-800'}`}>
+                                {supportOpenCount} open
+                              </span>
+                            )}
                           </div>
                           {active && s.desc && <div className="text-[11px] opacity-70 mt-0.5 leading-snug">{s.desc}</div>}
                         </button>
@@ -894,7 +948,7 @@ export default function AdminDashboard() {
                 <h2 className="font-display text-xl font-bold text-secondary">{activeMeta?.label}</h2>
                 {activeMeta?.desc && <p className="text-sm text-secondary/60 mt-0.5">{activeMeta.desc}</p>}
               </div>
-              {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
+              {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
                 <div className="flex gap-2">
                   <button
                     onClick={() => setForm(current !== undefined ? clone(current) : {})}
@@ -922,7 +976,7 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
+            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
               <div className="mb-5 flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 Unsaved changes to this section.
@@ -981,6 +1035,10 @@ export default function AdminDashboard() {
                   onComplete={completeInterview}
                 />
               </EditorBoundary>
+            ) : section === 'support' ? (
+              <EditorBoundary>
+                <SupportManager token={token} />
+              </EditorBoundary>
             ) : section === 'reviews' ? (
               <EditorBoundary>
                 <ReviewsManager
@@ -1012,7 +1070,7 @@ export default function AdminDashboard() {
             )}
 
             {/* Danger zone: reset everything */}
-            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'account' && (
+            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
               <div className="mt-10 pt-6 border-t border-secondary/10 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-secondary">Reset all content</div>

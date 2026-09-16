@@ -1878,6 +1878,49 @@ const CallIceCandidate = mongoose.model('CallIceCandidate', new mongoose.Schema(
   createdAt: { type: Date, default: Date.now },
 }));
 
+// Customer support — a message thread between a platform user
+// (hub / seeker / employer) and the admin team.
+const SupportTicket = mongoose.model('SupportTicket', new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  userRole: { type: String, enum: ['hub', 'seeker', 'employer'], required: true },
+  subject: { type: String, required: true, trim: true, maxlength: 120 },
+  category: { type: String, enum: ['bug', 'account', 'payment', 'chat', 'interview', 'other'], default: 'other' },
+  status: { type: String, enum: ['open', 'in_progress', 'resolved', 'closed'], default: 'open' },
+  priority: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
+  messages: [{
+    from: { type: String, enum: ['user', 'admin'], required: true },
+    body: { type: String, required: true, maxlength: 4000 },
+    createdAt: { type: Date, default: Date.now },
+  }],
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+}));
+
+// Employer reviews of talent they have previously unlocked (paid chat).
+// Displayed at the bottom of the talent's public portfolio.
+const TalentReview = mongoose.model('TalentReview', new mongoose.Schema({
+  employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  rating: { type: Number, min: 1, max: 5, required: true },
+  review: { type: String, default: '', trim: true, maxlength: 1000 },
+  createdAt: { type: Date, default: Date.now },
+}));
+TalentReview.index({ employerId: 1, seekerId: 1 }, { unique: true });
+
+function ticketInfo(t) {
+  return {
+    id: t._id,
+    subject: t.subject,
+    category: t.category,
+    status: t.status,
+    priority: t.priority,
+    userRole: t.userRole,
+    messages: t.messages || [],
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+}
+
 async function getConfig(key) {
   const doc = await SiteConfig.findOne({ key });
   return doc ? doc.value : null;
@@ -3524,6 +3567,341 @@ app.post('/api/notifications/read-all', authenticateToken, async (req, res) => {
     res.json({ ok: true });
   } catch (error) {
     console.error('Notification read-all error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Customer support tickets ─────────────────────────────────────────────────
+
+const SUPPORT_CATEGORIES = ['bug', 'account', 'payment', 'chat', 'interview', 'other'];
+const SUPPORT_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+const SUPPORT_PRIORITIES = ['low', 'medium', 'high'];
+
+// Create a support ticket.
+app.post('/api/support/tickets', authenticateToken, async (req, res) => {
+  try {
+    if (!['hub', 'seeker', 'employer'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Only platform users can open a ticket' });
+    }
+    const { subject, category, message } = req.body || {};
+    if (!subject || !String(subject).trim()) return res.status(400).json({ message: 'Subject is required' });
+    if (!message || !String(message).trim()) return res.status(400).json({ message: 'Describe your issue' });
+
+    const ticket = await SupportTicket.create({
+      userId: req.user.userId,
+      userRole: req.user.role,
+      subject: String(subject).trim().slice(0, 120),
+      category: SUPPORT_CATEGORIES.includes(category) ? category : 'other',
+      messages: [{ from: 'user', body: String(message).trim().slice(0, 4000) }],
+    });
+
+    await Notification.create({
+      userId: req.user.userId,
+      type: 'support',
+      title: 'Support ticket received',
+      body: ticket.subject,
+      payload: { ticketId: ticket._id },
+    });
+
+    res.status(201).json({ ticket: ticketInfo(ticket) });
+  } catch (error) {
+    console.error('Support create error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// A user's own tickets (newest first).
+app.get('/api/support/tickets', authenticateToken, async (req, res) => {
+  try {
+    const tickets = await SupportTicket.find({ userId: req.user.userId }).sort({ updatedAt: -1 }).limit(100);
+    res.set('Cache-Control', 'no-store');
+    res.json({ tickets: tickets.map(ticketInfo) });
+  } catch (error) {
+    console.error('Support list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// A single ticket (owner only).
+app.get('/api/support/tickets/:id', authenticateToken, async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, userId: req.user.userId });
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+    res.json({ ticket: ticketInfo(ticket) });
+  } catch (error) {
+    console.error('Support get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Add a message to one of the caller's own tickets.
+app.post('/api/support/tickets/:id/messages', authenticateToken, async (req, res) => {
+  try {
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, userId: req.user.userId });
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+    if (ticket.status === 'closed') {
+      return res.status(400).json({ message: 'This ticket is closed. Open a new ticket to follow up.' });
+    }
+    const body = String((req.body || {}).message || '').trim().slice(0, 4000);
+    if (!body) return res.status(400).json({ message: 'Message cannot be empty' });
+
+    ticket.messages.push({ from: 'user', body });
+    ticket.status = 'open';
+    ticket.updatedAt = new Date();
+    await ticket.save();
+
+    res.json({ ticket: ticketInfo(ticket) });
+  } catch (error) {
+    console.error('Support reply error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: list all tickets (optional status / search filters).
+app.get('/api/admin/support/tickets', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admins only' });
+    const { status, q } = req.query;
+    const query = {};
+    if (SUPPORT_STATUSES.includes(status)) query.status = status;
+    if (q && String(q).trim()) {
+      query.$or = [
+        { subject: { $regex: String(q).trim(), $options: 'i' } },
+        { 'messages.body': { $regex: String(q).trim(), $options: 'i' } },
+        { userRole: { $regex: String(q).trim(), $options: 'i' } },
+      ];
+    }
+    const tickets = await SupportTicket.find(query).sort({ updatedAt: -1 }).limit(200);
+    const userIds = [...new Set(tickets.map((t) => String(t.userId)))];
+    const users = await User.find({ _id: { $in: userIds } }).select('name company title role email');
+    const byId = {};
+    for (const u of users) byId[String(u._id)] = u;
+
+    const summary = (t) => {
+      const info = ticketInfo(t);
+      const count = (t.messages || []).length;
+      delete info.messages;
+      info.messageCount = count;
+      return info;
+    };
+
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      openCount: await SupportTicket.countDocuments({ status: { $in: ['open', 'in_progress'] } }),
+      tickets: tickets.map((t) => ({
+        ...summary(t),
+        user: {
+          id: t.userId,
+          name: byId[String(t.userId)]?.company || byId[String(t.userId)]?.name || 'Unknown user',
+          email: byId[String(t.userId)]?.email || t.userRole,
+          title: byId[String(t.userId)]?.title || '',
+        },
+      })),
+    });
+  } catch (error) {
+    console.error('Admin support list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: reply to a ticket (notifies the owner).
+app.post('/api/admin/support/tickets/:id/messages', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admins only' });
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+
+    const body = String((req.body || {}).message || '').trim().slice(0, 4000);
+    if (!body) return res.status(400).json({ message: 'Message cannot be empty' });
+
+    ticket.messages.push({ from: 'admin', body });
+    if (ticket.status === 'closed') ticket.status = 'in_progress';
+    ticket.updatedAt = new Date();
+    await ticket.save();
+
+    await Notification.create({
+      userId: ticket.userId,
+      type: 'support',
+      title: 'Support reply',
+      body: ticket.subject,
+      payload: { ticketId: ticket._id },
+    });
+
+    res.json({ ticket: ticketInfo(ticket) });
+  } catch (error) {
+    console.error('Admin support reply error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: update ticket status / priority (notifies the owner on status change).
+app.patch('/api/admin/support/tickets/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admins only' });
+    const ticket = await SupportTicket.findById(req.params.id);
+    if (!ticket) return res.status(404).json({ message: 'Ticket not found' });
+
+    const { status, priority } = req.body || {};
+    const changed = [];
+    if (SUPPORT_STATUSES.includes(status) && status !== ticket.status) {
+      ticket.status = status;
+      changed.push(`marked as ${status.replace('_', ' ')}`);
+    }
+    if (SUPPORT_PRIORITIES.includes(priority) && priority !== ticket.priority) {
+      ticket.priority = priority;
+      changed.push(`priority set to ${priority}`);
+    }
+    if (changed.length === 0) return res.json({ ticket: ticketInfo(ticket) });
+
+    ticket.updatedAt = new Date();
+    await ticket.save();
+    await Notification.create({
+      userId: ticket.userId,
+      type: 'support',
+      title: 'Support ticket updated',
+      body: ticket.subject,
+      payload: { ticketId: ticket._id },
+    });
+
+    res.json({ ticket: ticketInfo(ticket) });
+  } catch (error) {
+    console.error('Admin support update error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Talent reviews ───────────────────────────────────────────────────────────
+
+// Public: the reviews shown at the end of a talent's portfolio.
+app.get('/api/seekers/:id/reviews', async (req, res) => {
+  try {
+    const seeker = await User.findOne({ _id: req.params.id, role: 'seeker', status: 'approved', active: { $ne: false } });
+    if (!seeker) return res.status(404).json({ message: 'Talent not found' });
+    const reviews = await TalentReview.find({ seekerId: seeker._id }).sort({ createdAt: -1 }).limit(50);
+    const employers = await User.find({ _id: { $in: reviews.map((r) => r.employerId) } }).select('name company');
+    const byId = {};
+    for (const e of employers) byId[String(e._id)] = e.company || e.name;
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      reviews: reviews.map((r) => ({
+        id: r._id,
+        rating: r.rating,
+        review: r.review,
+        createdAt: r.createdAt,
+        employerName: byId[String(r.employerId)] || 'Verified employer',
+      })),
+    });
+  } catch (error) {
+    console.error('Reviews get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: who can be reviewed (previously unlocked) + any existing review.
+app.get('/api/employer/reviewables', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employers only' });
+    const payments = await ChatPayment.find({
+      employerId: req.user.userId,
+      status: { $in: ['paid', 'closed'] },
+    }).distinct('seekerId');
+    const seekers = await User.find({ _id: { $in: payments } }).select('name title avatar status active');
+    const reviews = await TalentReview.find({ employerId: req.user.userId, seekerId: { $in: payments } });
+    const bySeeker = {};
+    for (const r of reviews) bySeeker[String(r.seekerId)] = r;
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      items: seekers
+        .filter((s) => s.status === 'approved' && s.active !== false)
+        .map((s) => ({
+          seekerId: s._id,
+          name: s.name,
+          title: s.title,
+          avatar: s.avatar,
+          review: bySeeker[String(s._id)]
+            ? { rating: bySeeker[String(s._id)].rating, review: bySeeker[String(s._id)].review }
+            : null,
+        })),
+    });
+  } catch (error) {
+    console.error('Reviewables error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: create or update a review for a seeker they've unlocked.
+app.post('/api/seekers/:id/review', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employers only' });
+    const seeker = await User.findOne({ _id: req.params.id, role: 'seeker', status: 'approved', active: { $ne: false } });
+    if (!seeker) return res.status(404).json({ message: 'Talent not found' });
+
+    const unlocked = await ChatPayment.findOne({
+      employerId: req.user.userId,
+      seekerId: String(seeker._id),
+      status: { $in: ['paid', 'closed'] },
+    });
+    if (!unlocked) {
+      return res.status(403).json({ message: 'You can only review talent you have unlocked' });
+    }
+
+    const rating = Math.round(Number((req.body || {}).rating));
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Rating must be between 1 and 5' });
+    }
+    const reviewText = String((req.body || {}).review || '').trim().slice(0, 1000);
+
+    const existing = await TalentReview.findOne({ employerId: req.user.userId, seekerId: seeker._id });
+    if (existing) {
+      existing.rating = rating;
+      existing.review = reviewText;
+      await existing.save();
+      res.json({ review: existing });
+    } else {
+      const created = await TalentReview.create({ employerId: req.user.userId, seekerId: seeker._id, rating, review: reviewText });
+      res.status(201).json({ review: created });
+    }
+  } catch (error) {
+    console.error('Review save error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: their own reviews of talent (for management UI).
+app.get('/api/employer/reviews', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employers only' });
+    const reviews = await TalentReview.find({ employerId: req.user.userId }).sort({ createdAt: -1 });
+    const seekers = await User.find({ _id: { $in: reviews.map((r) => r.seekerId) } }).select('name title');
+    const byId = {};
+    for (const s of seekers) byId[String(s._id)] = s;
+    res.set('Cache-Control', 'no-store');
+    res.json({
+      reviews: reviews.map((r) => ({
+        id: r._id,
+        seekerId: r.seekerId,
+        seekerName: byId[String(r.seekerId)]?.name || 'Talent',
+        seekerTitle: byId[String(r.seekerId)]?.title || '',
+        rating: r.rating,
+        review: r.review,
+        createdAt: r.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error('Employer reviews error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: delete an inappropriate talent review.
+app.delete('/api/admin/talent-reviews/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admins only' });
+    const removed = await TalentReview.findByIdAndDelete(req.params.id);
+    if (!removed) return res.status(404).json({ message: 'Review not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Admin review delete error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
