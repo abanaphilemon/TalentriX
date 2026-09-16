@@ -2146,12 +2146,80 @@ function displayName(user, fallback) {
 // Shareable post templates — caption + collaboration design. Two flavor sets:
 // employer + talent (2 parties) or employer + talent + hub (3 parties when the
 // talent came through a hub link).
-function buildPostCaptions(members, withHub) {
+function buildPostCaptions(members, withHub, perspective) {
   const first = members.talent;
   const employer = members.employer;
   const hub = members.hub;
   const firstName = (first || '').split(' ')[0] || 'they';
 
+  // The talent tells the story from their own journey.
+  if (perspective === 'talent') {
+    if (withHub) {
+      return {
+        linkedin:
+`🎉 A new chapter is here — I'm joining ${employer}!
+
+It all started with a conversation on TalentriX, and today I'm thrilled to be saying yes to an incredible opportunity. A special thank-you to ${hub} for spotting my potential and making the introduction.
+
+To everyone who believed in me — this is only the beginning. I can't wait to learn, grow, and build great things together. 🚀
+
+#NewBeginnings #NewJob #JoiningTheTeam #TalentShares`,
+        instagram:
+`New chapter unlocked! 🌟
+I'm so excited to announce that I'm joining ${employer} — and a huge thank-you to ${hub} for making this happen.
+
+To everyone who supported me along the way: thank you. Let's build something amazing together! 🔥
+
+#NewChapter #NewJob #FutureHere #TalentShares`,
+        x:
+`Thrilled to share — I'm joining ${employer} 🎉
+A new chapter begins today. Thank you to ${hub} for the introduction and to everyone who made this possible!
+#NewJob #TalentShares`,
+      };
+    }
+    return {
+      linkedin:
+`🎉 A new chapter is here — I'm joining ${employer}!
+
+It all started with a conversation on TalentriX, and today I'm thrilled to be saying yes to an incredible opportunity. Thank you to everyone who believed in me — this is only the beginning.
+
+I can't wait to learn, grow, and build great things together. 🚀
+
+#NewBeginnings #NewJob #JoiningTheTeam #TalentShares`,
+      instagram:
+`New chapter unlocked! 🌟
+I'm so excited to announce that I'm joining ${employer}. To everyone who supported me along the way — thank you. Now let's build something amazing together! 🔥
+
+#NewChapter #NewJob #FutureHere #TalentShares`,
+      x:
+`Thrilled to share — I'm joining ${employer} 🎉
+A new chapter begins today. Thank you to everyone who made this happen.
+#NewJob #TalentShares`,
+    };
+  }
+
+  // The hub celebrates a member of their community landing a new role.
+  if (perspective === 'hub') {
+    return {
+      linkedin:
+`🎉 We're incredibly proud to announce that ${first}, one of the brilliant talents in our network, is joining ${employer}!
+
+We introduced promising talent to a company that believes in them — and the result speaks for itself. Congratulations, ${firstName}! Keep making us proud. 🚀
+
+#TalentSpotlight #NewHire #Collaboration #TalentShares`,
+      instagram:
+`Another win for our talent community! 🎉
+${first} from our network just joined ${employer} — and we couldn't be prouder. This is what happens when talent meets the right opportunity. 🤝
+
+#OurTalent #ProudMoment #NewHire #TalentShares`,
+      x:
+`Proud to see ${first} from our talent network join ${employer} 🎉
+A great match and a great fit. This is why we do what we do.
+#TalentWins #NewHire`,
+    };
+  }
+
+  // The employer welcomes their newest teammate.
   if (withHub) {
     return {
       linkedin:
@@ -2203,15 +2271,15 @@ Welcome aboard, ${firstName}! #NewHire #TalentShares`,
 
 // A 1080×1080 collaboration design as inline SVG (no external assets), so the
 // employer can download it as an image and post it on any channel.
-function collabSvg({ platform, members, brand }) {
+function collabSvg({ platform, members, brand, headline, sub }) {
   const accentSet =
     platform === 'LinkedIn' ? ['#0a66c2', '#062a4a']
     : platform === 'Instagram' ? ['#e1306c', '#5b1d8c']
     : ['#0f172a', '#334155'];
   const [c1, c2] = accentSet;
   const eyebrow = 'COLLABORATION';
-  const headline = 'A talent bridge, now a team';
-  const sub = 'Proudly connecting talent and opportunity';
+  const h = headline || 'A talent bridge, now a team';
+  const s = sub || 'Proudly connecting talent and opportunity';
   const cx = 540;
   const avatarY = 470;
   const startX = cx - ((members.length - 1) * 250) / 2;
@@ -2244,16 +2312,18 @@ function collabSvg({ platform, members, brand }) {
   <circle cx="90" cy="900" r="260" fill="#ffffff" opacity="0.05"/>
   <text x="60" y="70" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#ffffff" opacity="0.9">${escXml(brand)}</text>
   <text x="${cx}" y="260" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" letter-spacing="8" font-weight="700" fill="#ffffff" opacity="0.85">${escXml(eyebrow)}</text>
-  <text x="${cx}" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="800" fill="#ffffff">${escXml(headline)}</text>
-  <text x="${cx}" y="382" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#ffffff" opacity="0.85">${escXml(sub)}</text>
+  <text x="${cx}" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="800" fill="#ffffff">${escXml(h)}</text>
+  <text x="${cx}" y="382" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#ffffff" opacity="0.85">${escXml(s)}</text>
   ${avatars}
   ${roles}
   <text x="${cx}" y="978" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#ffffff" opacity="0.95">Powered by ${escXml(brand)} · connecting talent &amp; opportunity</text>
 </svg>`;
 }
 
-// Build the three shareable templates (LinkedIn, Instagram, X) for a closure.
-async function buildPostTemplates(closure) {
+// Build the three shareable templates (LinkedIn, Instagram, X) for a closure,
+// told from one party's perspective so everyone — employer, talent, and hub —
+// gets captions and a design that fit the way *they* share news.
+async function buildPostTemplates(closure, perspective = 'employer') {
   const employer = await User.findById(closure.employerId);
   const seeker = await User.findById(closure.seekerId);
   const hub = seeker?.hubId ? await User.findById(seeker.hubId) : null;
@@ -2266,11 +2336,23 @@ async function buildPostTemplates(closure) {
     hub: hub ? displayName(hub, null) : null,
   };
 
-  const body = [
-    { key: 'employer', name: members.employer, role: 'Employer' },
-    { key: 'talent', name: members.talent, role: seeker?.title || 'New Hire' },
-  ];
-  if (withHub) body.push({ key: 'hub', name: members.hub, role: 'Talent Partner' });
+  const layouts = {
+    employer: [
+      { name: members.employer, role: 'Employer' },
+      { name: members.talent, role: seeker?.title || 'New Hire' },
+    ],
+    talent: [
+      { name: members.talent, role: seeker?.title || 'New Hire' },
+      { name: members.employer, role: 'Employer' },
+    ],
+    hub: [
+      { name: members.hub, role: 'Talent Partner' },
+      { name: members.talent, role: seeker?.title || 'New Hire' },
+      { name: members.employer, role: 'Employer' },
+    ],
+  };
+  const body = [...(layouts[perspective] || layouts.employer)];
+  if (withHub && perspective !== 'hub') body.push({ name: members.hub, role: 'Talent Partner' });
 
   const memberCards = body.map((m) => ({
     name: m.name,
@@ -2278,22 +2360,44 @@ async function buildPostTemplates(closure) {
     initials: initialsOf(m.name),
   }));
 
-  const captions = buildPostCaptions(members, withHub);
+  const copy = {
+    employer: { headline: 'A talent bridge, now a team', sub: 'Proudly connecting talent and opportunity' },
+    talent: { headline: 'My next chapter begins here', sub: 'A new opportunity, a brighter future' },
+    hub: { headline: 'Talent spotted. Opportunity unlocked.', sub: 'Celebrating a match made for greatness' },
+  };
+  const label = copy[perspective] || copy.employer;
+
+  const captions = buildPostCaptions(members, withHub, perspective);
   return [
-    { platform: 'LinkedIn', caption: captions.linkedin, svg: collabSvg({ platform: 'LinkedIn', members: memberCards, brand }) },
-    { platform: 'Instagram', caption: captions.instagram, svg: collabSvg({ platform: 'Instagram', members: memberCards, brand }) },
-    { platform: 'X (Twitter)', caption: captions.x, svg: collabSvg({ platform: 'X', members: memberCards, brand }) },
+    { platform: 'LinkedIn', caption: captions.linkedin, svg: collabSvg({ platform: 'LinkedIn', members: memberCards, brand, headline: label.headline, sub: label.sub }) },
+    { platform: 'Instagram', caption: captions.instagram, svg: collabSvg({ platform: 'Instagram', members: memberCards, brand, headline: label.headline, sub: label.sub }) },
+    { platform: 'X (Twitter)', caption: captions.x, svg: collabSvg({ platform: 'X', members: memberCards, brand, headline: label.headline, sub: label.sub }) },
   ];
 }
 
-function buildClosureNotification(closure, seeker, templates) {
+function buildClosureNotification({ recipientId, perspective, seeker, employerName, templates }) {
   const firstName = (seeker?.name || 'the new hire').split(' ')[0];
-  return {
-    userId: closure.employerId,
+  const base = {
+    userId: recipientId,
     type: 'post_templates',
     title: 'Your social post templates are ready',
-    body: `${firstName} is now on your team. Download the captions and designs, then share the news on your channels.`,
     payload: { templates, seekerName: seeker?.name || '' },
+  };
+  if (perspective === 'talent') {
+    return {
+      ...base,
+      body: `You're joining ${employerName || 'your new team'} — download the captions and designs and share the news on your channels.`,
+    };
+  }
+  if (perspective === 'hub') {
+    return {
+      ...base,
+      body: `${firstName} from your network is joining ${employerName || 'a new team'} — download the captions and designs and celebrate the win together.`,
+    };
+  }
+  return {
+    ...base,
+    body: `${firstName} is now on your team. Download the captions and designs, then share the news on your channels.`,
   };
 }
 
@@ -3361,9 +3465,25 @@ app.post('/api/employer/chat-closures/:id/answer', authenticateToken, async (req
     await closure.save();
 
     if (closure.postAgreed) {
-      const templates = await buildPostTemplates(closure);
-      const seeker = await User.findById(closure.seekerId).select('name');
-      await Notification.create(buildClosureNotification(closure, seeker, templates));
+      const seeker = await User.findById(closure.seekerId).select('name title hubId');
+      const employer = await User.findById(closure.employerId).select('name company');
+      const hub = seeker?.hubId ? await User.findById(seeker.hubId).select('name company') : null;
+      const employerName = displayName(employer, 'our team');
+
+      const notifications = [];
+
+      const employerTemplates = await buildPostTemplates(closure, 'employer');
+      notifications.push(buildClosureNotification({ recipientId: closure.employerId, perspective: 'employer', seeker, employerName, templates: employerTemplates }));
+
+      const talentTemplates = await buildPostTemplates(closure, 'talent');
+      notifications.push(buildClosureNotification({ recipientId: closure.seekerId, perspective: 'talent', seeker, employerName, templates: talentTemplates }));
+
+      if (hub) {
+        const hubTemplates = await buildPostTemplates(closure, 'hub');
+        notifications.push(buildClosureNotification({ recipientId: hub._id, perspective: 'hub', seeker, employerName, templates: hubTemplates }));
+      }
+
+      await Notification.insertMany(notifications);
     }
     res.json({ ok: true });
   } catch (error) {

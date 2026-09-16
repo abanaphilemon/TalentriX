@@ -25,6 +25,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import { readImageFile } from '../lib/image.js';
+import NotificationCenter from '../components/NotificationCenter.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -311,6 +312,7 @@ export default function HubDashboard() {
             <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationCenter token={token} />
             <span className="text-sm text-secondary/60 hidden sm:inline">
               {user?.name || user?.email}
             </span>

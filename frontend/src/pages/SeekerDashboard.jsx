@@ -33,6 +33,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import NotificationCenter from '../components/NotificationCenter.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import { ensureKeys } from '../lib/e2e.js';
@@ -634,6 +635,7 @@ export default function SeekerDashboard() {
             <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationCenter token={token} />
             <button
               onClick={() => setChatOpen(true)}
               className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"

@@ -748,10 +748,17 @@ export default function EmployerDashboard() {
                       <div className="min-w-0">
                         <div className="font-semibold text-secondary truncate">{s.name}</div>
                         <div className="text-xs text-secondary/50 truncate">
-                          <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
-                            <Lock className="w-3 h-3 shrink-0" />
-                            <span>••••••@•••••</span>
-                          </span>
+                          {s.contactLocked ? (
+                            <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
+                              <Lock className="w-3 h-3 shrink-0" />
+                              <span>••••••@•••••</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1" title="Contact details unlocked">
+                              <Mail className="w-3 h-3 shrink-0 text-emerald-600" />
+                              <span className="text-secondary/70">{s.email}</span>
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
