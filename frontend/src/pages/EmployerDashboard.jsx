@@ -33,6 +33,8 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
+import ChatClosureModal from '../components/ChatClosureModal.jsx';
+import NotificationCenter from '../components/NotificationCenter.jsx';
 import EmployerRequestTalent from './EmployerRequestTalent.jsx';
 import { readImageFile } from '../lib/image.js';
 
@@ -88,6 +90,15 @@ export default function EmployerDashboard() {
   const [payPrice, setPayPrice] = useState(null);
   const [payMsg, setPayMsg] = useState('');
   const [paidSeekers, setPaidSeekers] = useState(new Set());
+
+  // Chat locks & employment-sharing flow
+  const [closureQueue, setClosureQueue] = useState([]);
+  const [closureOpen, setClosureOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closureOpenRef = useRef(false);
+  useEffect(() => {
+    closureOpenRef.current = closureOpen;
+  }, [closureOpen]);
 
   const token = localStorage.getItem('tbai.token');
 
@@ -153,6 +164,10 @@ export default function EmployerDashboard() {
     loadHubs();
     loadPaymentInfo();
     handlePaymentCallback();
+    handleChatReturn();
+    loadPendingClosures();
+    const closurePoll = setInterval(() => loadPendingClosures(), 60000);
+    return () => clearInterval(closurePoll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -315,6 +330,15 @@ export default function EmployerDashboard() {
     }
   };
 
+  // Returning from a video call: ?chat=<seekerId> re-opens the secure chat
+  // thread we were just chatting on.
+  const handleChatReturn = async () => {
+    const chat = new URLSearchParams(window.location.search).get('chat');
+    if (!chat) return;
+    openChat(chat, true);
+    window.history.replaceState({}, '', window.location.pathname);
+  };
+
   const openChat = async (seed, force = false) => {
     // Payment gate: if seeding a specific seeker, check if paid
     if (!force && seed && !paidSeekers.has(seed)) {
@@ -357,6 +381,76 @@ export default function EmployerDashboard() {
     if (tab === 'seekers') loadSeekers();
   };
 
+  // ── Chat locks & employment-sharing flow ────────────────────────────────
+  // Load any pending "chat ended" flows. The backend closes chats idle for
+  // 48 hours first, so a chat can expire while the employer is offline and
+  // still ask for the popup here on the next login.
+  const loadPendingClosures = async (silent = true) => {
+    if (silent && closureOpenRef.current) return;
+    try {
+      const res = await fetch(`${API_URL}/employer/chat-closures/pending`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const pending = d.closures || [];
+        setClosureQueue(pending);
+        if (pending.length) setClosureOpen(true);
+      }
+    } catch {
+      // ignore — retried on the next poll
+    }
+  };
+
+  const submitClosure = async (payload) => {
+    setClosing(true);
+    try {
+      const res = await fetch(`${API_URL}/employer/chat-closures/${closureQueue[0]?.id}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.message || 'Could not save your answer.');
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const dismissClosure = () => {
+    const rest = closureQueue.slice(1);
+    setClosureQueue(rest);
+    if (rest.length === 0) setClosureOpen(false);
+  };
+
+  // Leave chat → locks it and opens the employment-sharing flow.
+  const handleLeaveChat = async (partner) => {
+    try {
+      const res = await fetch(`${API_URL}/chat/leave`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ to: partner.id }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setPayMsg(d.message || 'Could not leave this chat. Please try again.');
+        setTimeout(() => setPayMsg(''), 5000);
+        return;
+      }
+      await closeChat();
+      if (d.closure) {
+        setClosureQueue((prev) => [d.closure, ...prev.filter((c) => String(c.id) !== String(d.closure.id))]);
+        setClosureOpen(true);
+      }
+      // The talent's contact details lock again — refresh their locked state.
+      loadSeekers();
+      loadPaymentInfo();
+    } catch {
+      setPayMsg('Could not leave this chat. Please try again.');
+      setTimeout(() => setPayMsg(''), 5000);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#faf9f6]">
       {/* Top bar */}
@@ -373,6 +467,7 @@ export default function EmployerDashboard() {
             <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationCenter token={token} />
             <button
               onClick={() => openChat(null)}
               className="relative inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"
@@ -929,7 +1024,16 @@ export default function EmployerDashboard() {
       {tab === 'requestTalent' && <EmployerRequestTalent />}
 
       {/* Secure end-to-end encrypted chat */}
-      <SecureChat open={chatOpen} onClose={closeChat} seedId={chatSeed} />
+      <SecureChat open={chatOpen} onClose={closeChat} seedId={chatSeed} onLeaveChat={handleLeaveChat} />
+
+      {/* Chat-lock / employment-sharing modal */}
+      <ChatClosureModal
+        open={closureOpen && closureQueue.length > 0}
+        closure={closureQueue[0] || null}
+        busy={closing}
+        onSubmit={submitClosure}
+        onDismiss={dismissClosure}
+      />
 
       {/* Payment success banner */}
       {payMsg && (

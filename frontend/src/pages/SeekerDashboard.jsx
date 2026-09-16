@@ -336,6 +336,7 @@ export default function SeekerDashboard() {
 
   // Secure chat
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatSeed, setChatSeed] = useState(null);
   const [unread, setUnread] = useState(0);
 
   const token = localStorage.getItem('tbai.token');
@@ -354,6 +355,18 @@ export default function SeekerDashboard() {
     const iv = setInterval(tick, 15000);
     return () => clearInterval(iv);
   }, [token]);
+
+  // Returning from a video call: ?chat=<employerId> re-opens the secure chat
+  // thread we were just chatting on.
+  useEffect(() => {
+    if (!token) return;
+    const chat = new URLSearchParams(window.location.search).get('chat');
+    if (!chat) return;
+    setChatSeed(chat);
+    setChatOpen(true);
+    window.history.replaceState({}, '', window.location.pathname);
+  }, [token]);
+
   const portfolioUrl = `${window.location.origin}/portfolio/${user?.id}`;
 
   const loadProfile = async () => {
@@ -1429,8 +1442,10 @@ export default function SeekerDashboard() {
         open={chatOpen}
         onClose={() => {
           setChatOpen(false);
+          setChatSeed(null);
           setUnread(0);
         }}
+        seedId={chatSeed}
       />
 
       {/* Job detail modal */}

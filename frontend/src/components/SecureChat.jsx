@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   ChevronLeft,
   Video,
+  LogOut,
 } from 'lucide-react';
 import { ensureKeys, decryptMessage, encryptMessage, formatWhen } from '../lib/e2e.js';
 
@@ -40,7 +41,7 @@ const initials = (name = '') =>
     .join('')
     .toUpperCase();
 
-export default function SecureChat({ open, onClose, seedId }) {
+export default function SecureChat({ open, onClose, seedId, onLeaveChat }) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('tbai.token') : null;
   const [session, setSession] = useState(0);
   const [jwk, setJwk] = useState(null);
@@ -52,6 +53,7 @@ export default function SecureChat({ open, onClose, seedId }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [calling, setCalling] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [lf, setLf] = useState({ email: '', password: '', role: 'employer' });
   const [lfBusy, setLfBusy] = useState(false);
   const [lfError, setLfError] = useState('');
@@ -283,6 +285,23 @@ async (partnerId, showBusy) => {
     }
   };
 
+  // Employers can end a chat. It locks again and their contact details are
+  // hidden until they unlock it once more.
+  const askLeaveChat = async () => {
+    if (!active?.partner?.id || leaving || !onLeaveChat) return;
+    if (!window.confirm(`Leave this chat with ${active.partner.name}? The conversation will be locked and their contact details will be hidden until you unlock the chat again.`)) return;
+    setLeaving(true);
+    setError('');
+    try {
+      await onLeaveChat(active.partner);
+    } catch {
+      setError('Could not leave this chat. Please try again.');
+      setLeaving(false);
+    }
+  };
+
+  const canLeave = !!onLeaveChat && me?.role === 'employer';
+
   if (!open) return null;
 
   return (
@@ -455,6 +474,17 @@ async (partnerId, showBusy) => {
                     >
                       {calling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
                     </button>
+                    {canLeave && (
+                      <button
+                        onClick={askLeaveChat}
+                        disabled={leaving}
+                        title="Leave chat — locks this conversation and hides contact details"
+                        aria-label="Leave chat"
+                        className="w-9 h-9 rounded-xl bg-red-50 text-red-600 hover:bg-red-100 flex items-center justify-center transition-colors disabled:opacity-50 shrink-0"
+                      >
+                        {leaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                      </button>
+                    )}
                   </div>
 
                   {/* messages */}

@@ -1209,6 +1209,14 @@ app.post('/api/chat/messages', authenticateToken, async (req, res) => {
       if (!hasPaid) {
         return res.status(402).json({ message: 'Payment required', code: 'PAYMENT_REQUIRED' });
       }
+      // A chat that sat idle for 48 hours locks itself at send time — the
+      // employer must pay again to continue, and the sharing flow opens.
+      try {
+        if ((await chatIdleMs(hasPaid)) > CHAT_IDLE_MS) {
+          await closePaidChat(me._id, other._id, 'inactive');
+          return res.status(402).json({ message: 'This chat has been locked. Please unlock it again to continue.', code: 'PAYMENT_REQUIRED' });
+        }
+      } catch { /* treat as still open */ }
     }
 
     await provisionKeys(other);
@@ -1810,9 +1818,39 @@ const ChatPayment = mongoose.model('ChatPayment', new mongoose.Schema({
   amount: { type: Number, required: true },
   paymentRef: { type: String, default: '' },
   monnifyRef: { type: String, default: '' },
-  status: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'paid', 'failed', 'closed'], default: 'pending' },
+  lockedBy: { type: String, enum: ['', 'leave', 'inactive'], default: '' },
   createdAt: { type: Date, default: Date.now },
   paidAt: { type: Date },
+  closedAt: { type: Date },
+}));
+
+// One "chat ended" record per locked chat. It drives the employer's
+// employment-sharing flow: did you hire them, will you share the news, and
+// (when they decline to post) the reason why.
+const ChatClosure = mongoose.model('ChatClosure', new mongoose.Schema({
+  employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  triggeredBy: { type: String, enum: ['leave', 'inactive'], required: true },
+  employed: { type: Boolean, default: false },
+  postAgreed: { type: Boolean, default: false },
+  reason: { type: String, default: '' },
+  status: { type: String, enum: ['pending', 'done'], default: 'pending' },
+  createdAt: { type: Date, default: Date.now },
+  answeredAt: { type: Date },
+}));
+
+// Lightweight in-app notifications. Used today to deliver the shareable
+// post templates (captions + collaboration designs) an employer may
+// download after confirming they hired a talent.
+const Notification = mongoose.model('Notification', new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  type: { type: String, required: true },
+  title: { type: String, default: '' },
+  body: { type: String, default: '' },
+  payload: { type: mongoose.Schema.Types.Mixed, default: {} },
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
 }));
 
 // Instant attacker-free chat calls between an employer and a job seeker.
@@ -2001,6 +2039,262 @@ function callAccessOk(req, call) {
     String(call.participantId) === String(req.user.userId) ||
     req.user.role === 'admin'
   );
+}
+
+// ── Chat lifecycle & employment-sharing flow ────────────────────────────────
+// A paid chat stays open while the pair is active. It locks again when the
+// employer leaves it, or after 48 hours without a message — at which point the
+// contact details are hidden again and the employer must pay to reopen.
+
+const CHAT_IDLE_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+function escXml(s = '') {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function initialsOf(name = '') {
+  return name
+    .split(' ')
+    .map((p) => p && p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+}
+
+// Create a pending "chat ended" record for this payment — or reuse one that is
+// already waiting to be answered so duplicates never pile up.
+async function ensureClosure(payment, trigger) {
+  const existing = await ChatClosure.findOne({
+    employerId: payment.employerId,
+    seekerId: payment.seekerId,
+    status: 'pending',
+  });
+  if (existing) return existing;
+  return ChatClosure.create({
+    employerId: payment.employerId,
+    seekerId: payment.seekerId,
+    triggeredBy: trigger,
+  });
+}
+
+// Close a paid chat (locks it again) and open its employment-sharing flow.
+async function closePaidChat(employerId, seekerId, trigger) {
+  const payment = await ChatPayment.findOne({ employerId, seekerId, status: 'paid' });
+  if (!payment) return null;
+  payment.status = 'closed';
+  payment.lockedBy = trigger;
+  payment.closedAt = new Date();
+  await payment.save();
+  return ensureClosure(payment, trigger);
+}
+
+// How long this pair's chat has been idle, measured from the last message
+// (or from the moment they paid, if they never exchanged messages).
+async function chatIdleMs(payment) {
+  const last = await Message.findOne({
+    $or: [
+      { from: payment.employerId, to: payment.seekerId },
+      { from: payment.seekerId, to: payment.employerId },
+    ],
+  }).sort({ createdAt: -1 });
+  const base = last ? new Date(last.createdAt) : new Date(payment.paidAt || payment.createdAt);
+  return Date.now() - base.getTime();
+}
+
+// Close every paid chat for this employer that has sat idle for 48 hours.
+async function closeInactiveChats(employerId) {
+  const payments = await ChatPayment.find({ employerId, status: 'paid' });
+  const locked = [];
+  for (const p of payments) {
+    try {
+      if ((await chatIdleMs(p)) > CHAT_IDLE_MS) {
+        locked.push(await closePaidChat(p.employerId, p.seekerId, 'inactive'));
+      }
+    } catch { /* ignore per-record */ }
+  }
+  return locked.filter(Boolean);
+}
+
+async function closureInfo(c, seeker, hubName) {
+  return {
+    id: c._id,
+    triggeredBy: c.triggeredBy,
+    status: c.status,
+    employed: c.employed,
+    postAgreed: c.postAgreed,
+    reason: c.reason,
+    seeker: {
+      id: c.seekerId,
+      name: seeker?.name || 'This job seeker',
+      avatar: seeker?.avatar || '',
+    },
+    hub: hubName || null,
+  };
+}
+
+// Cap a brand/name for template captions so lines stay readable.
+function displayName(user, fallback) {
+  const name = (user?.company || user?.name || '').toString().trim();
+  return name || fallback;
+}
+
+// Shareable post templates — caption + collaboration design. Two flavor sets:
+// employer + talent (2 parties) or employer + talent + hub (3 parties when the
+// talent came through a hub link).
+function buildPostCaptions(members, withHub) {
+  const first = members.talent;
+  const employer = members.employer;
+  const hub = members.hub;
+  const firstName = (first || '').split(' ')[0] || 'they';
+
+  if (withHub) {
+    return {
+      linkedin:
+`🎉 Thrilled to announce that ${first} is joining ${employer}!
+
+This hire began as a conversation on TalentriX and became a partnership thanks to ${hub}. They spotted a remarkable talent, we chased them — and now ${first} is part of our team.
+
+A heartfelt thank-you to ${hub} for the introduction, and to ${firstName} for trusting us with your next chapter. Great things are built when talent and opportunity finally meet. 🚀
+
+#NewHire #TalentDiscovery #WelcomeToTheTeam #Collaboration`,
+      instagram:
+`New teammate alert! 🌟
+
+We're beyond excited to welcome ${first} to the ${employer} family. A special shout-out to ${hub} for spotting their potential and connecting us — this is collaboration at its best.
+
+Welcome aboard, ${firstName}! Here's to everything we'll build together. 🤝
+
+#NewHire #WelcomeAboard #TeamWork #TalentShares`,
+      x:
+`Big news: ${first} is joining ${employer} as our newest teammate 🎉
+Credit to ${hub} for the introduction — talent discovered, potential unlocked.
+Welcome aboard, ${firstName}! #NewHire #TalentShares`,
+    };
+  }
+
+  return {
+    linkedin:
+`🎉 A new teammate to celebrate — ${first} is joining ${employer}!
+
+From our very first conversation on TalentriX, it was clear ${firstName} was someone special: genuinely talented, relentlessly driven, and the kind of person a team is better for.
+
+Welcome aboard, ${firstName}! We can't wait to see how high we'll go together. 🚀
+
+#NewHire #WelcomeToTheTeam #Hiring #TalentShares`,
+    instagram:
+`Say hello to our newest teammate! 🌟
+
+Great things happen when talent meets opportunity — and ${first} is living proof. We're so excited to grow, learn, and create together.
+
+Welcome to the family, ${firstName}! 🔥
+
+#NewHire #WelcomeAboard #CreatingTogether #TalentShares`,
+    x:
+`New teammate unlocked 🎉
+${first} is joining ${employer}, and we couldn't be happier.
+Welcome aboard, ${firstName}! #NewHire #TalentShares`,
+  };
+}
+
+// A 1080×1080 collaboration design as inline SVG (no external assets), so the
+// employer can download it as an image and post it on any channel.
+function collabSvg({ platform, members, brand }) {
+  const accentSet =
+    platform === 'LinkedIn' ? ['#0a66c2', '#062a4a']
+    : platform === 'Instagram' ? ['#e1306c', '#5b1d8c']
+    : ['#0f172a', '#334155'];
+  const [c1, c2] = accentSet;
+  const eyebrow = 'COLLABORATION';
+  const headline = 'A talent bridge, now a team';
+  const sub = 'Proudly connecting talent and opportunity';
+  const cx = 540;
+  const avatarY = 470;
+  const startX = cx - ((members.length - 1) * 250) / 2;
+
+  const avatars = members
+    .map((m, i) => {
+      const x = startX + i * 250;
+      return `
+        <circle cx="${x}" cy="${avatarY}" r="78" fill="#ffffff" opacity="0.14"/>
+        <circle cx="${x}" cy="${avatarY}" r="62" fill="${c2}"/>
+        <text x="${x}" y="${avatarY + 6}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700" fill="#ffffff">${escXml(m.initials)}</text>`;
+    })
+    .join('');
+
+  const roles = members
+    .map((m, i) => `
+      <text x="${cx}" y="${i === 0 ? 640 : 640 + i * 46}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#ffffff">${escXml(m.name)}</text>
+      <text x="${cx}" y="${(i === 0 ? 640 : 640 + i * 46) + 30}" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="22" fill="#ffffff" opacity="0.75">${escXml(m.role)}</text>`)
+    .join('');
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${c1}"/>
+      <stop offset="1" stop-color="${c2}"/>
+    </linearGradient>
+  </defs>
+  <rect width="1080" height="1080" fill="url(#bg)"/>
+  <circle cx="960" cy="120" r="220" fill="#ffffff" opacity="0.06"/>
+  <circle cx="90" cy="900" r="260" fill="#ffffff" opacity="0.05"/>
+  <text x="60" y="70" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" fill="#ffffff" opacity="0.9">${escXml(brand)}</text>
+  <text x="${cx}" y="260" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" letter-spacing="8" font-weight="700" fill="#ffffff" opacity="0.85">${escXml(eyebrow)}</text>
+  <text x="${cx}" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="800" fill="#ffffff">${escXml(headline)}</text>
+  <text x="${cx}" y="382" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" fill="#ffffff" opacity="0.85">${escXml(sub)}</text>
+  ${avatars}
+  ${roles}
+  <text x="${cx}" y="978" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#ffffff" opacity="0.95">Powered by ${escXml(brand)} · connecting talent &amp; opportunity</text>
+</svg>`;
+}
+
+// Build the three shareable templates (LinkedIn, Instagram, X) for a closure.
+async function buildPostTemplates(closure) {
+  const employer = await User.findById(closure.employerId);
+  const seeker = await User.findById(closure.seekerId);
+  const hub = seeker?.hubId ? await User.findById(seeker.hubId) : null;
+  const withHub = !!hub;
+  const brand = 'TalentriX';
+
+  const members = {
+    employer: displayName(employer, 'Our team'),
+    talent: seeker?.name || 'Our new teammate',
+    hub: hub ? displayName(hub, null) : null,
+  };
+
+  const body = [
+    { key: 'employer', name: members.employer, role: 'Employer' },
+    { key: 'talent', name: members.talent, role: seeker?.title || 'New Hire' },
+  ];
+  if (withHub) body.push({ key: 'hub', name: members.hub, role: 'Talent Partner' });
+
+  const memberCards = body.map((m) => ({
+    name: m.name,
+    role: m.role,
+    initials: initialsOf(m.name),
+  }));
+
+  const captions = buildPostCaptions(members, withHub);
+  return [
+    { platform: 'LinkedIn', caption: captions.linkedin, svg: collabSvg({ platform: 'LinkedIn', members: memberCards, brand }) },
+    { platform: 'Instagram', caption: captions.instagram, svg: collabSvg({ platform: 'Instagram', members: memberCards, brand }) },
+    { platform: 'X (Twitter)', caption: captions.x, svg: collabSvg({ platform: 'X', members: memberCards, brand }) },
+  ];
+}
+
+function buildClosureNotification(closure, seeker, templates) {
+  const firstName = (seeker?.name || 'the new hire').split(' ')[0];
+  return {
+    userId: closure.employerId,
+    type: 'post_templates',
+    title: 'Your social post templates are ready',
+    body: `${firstName} is now on your team. Download the captions and designs, then share the news on your channels.`,
+    payload: { templates, seekerName: seeker?.name || '' },
+  };
 }
 
 // ── Interview email drafts ──────────────────────────────────────────────────
@@ -2988,6 +3282,130 @@ app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
 // Basic route
 app.get('/', (req, res) => {
   res.json({ message: 'TalentriX API' });
+});
+
+// ── Chat locking & employment sharing ───────────────────────────────────────
+
+// Leave chat (employer). Closes the paid access so the chat locks again until
+// the employer pays, and starts the employment-sharing flow.
+app.post('/api/chat/leave', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    const { to } = req.body || {};
+    if (!to) return res.status(400).json({ message: 'to required' });
+    const closure = await closePaidChat(req.user.userId, to, 'leave');
+    if (!closure) return res.status(404).json({ message: 'No active chat to leave' });
+    const seeker = await User.findById(to).select('name avatar title hubId');
+    let hub = null;
+    if (seeker?.hubId) {
+      const h = await User.findById(seeker.hubId).select('name company');
+      hub = h ? h.company || h.name : null;
+    }
+    res.json({ closure: await closureInfo(closure, seeker, hub) });
+  } catch (error) {
+    console.error('Chat leave error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: close any chats idle for 48 hours, then list every "chat ended"
+// flow still waiting for an answer. Called on login and periodically so the
+// popup appears even if the employer wasn't signed in when a chat expired.
+app.get('/api/employer/chat-closures/pending', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    await closeInactiveChats(req.user.userId);
+    const closures = await ChatClosure.find({ employerId: req.user.userId, status: 'pending' }).sort({ createdAt: -1 });
+    const out = [];
+    const hubCache = {};
+    for (const c of closures) {
+      const seeker = await User.findById(c.seekerId).select('name avatar title hubId');
+      let hub = null;
+      if (seeker?.hubId) {
+        const key = String(seeker.hubId);
+        if (hubCache[key] !== undefined) hub = hubCache[key];
+        else {
+          const h = await User.findById(seeker.hubId).select('name company');
+          hub = h ? h.company || h.name : null;
+          hubCache[key] = hub;
+        }
+      }
+      out.push(await closureInfo(c, seeker, hub));
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ closures: out });
+  } catch (error) {
+    console.error('Pending closures error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Employer: answer a closure. When they agree to share the news, generate the
+// post templates and deliver them as a notification (bell icon).
+app.post('/api/employer/chat-closures/:id/answer', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    const closure = await ChatClosure.findById(req.params.id);
+    if (!closure || String(closure.employerId) !== String(req.user.userId)) {
+      return res.status(404).json({ message: 'Not found' });
+    }
+    if (closure.status !== 'pending') {
+      return res.status(400).json({ message: 'Already answered' });
+    }
+    const { employed, postAgreed, reason } = req.body || {};
+    closure.employed = !!employed;
+    closure.postAgreed = !!postAgreed;
+    closure.reason = String(reason || '').trim().slice(0, 2000);
+    closure.answeredAt = new Date();
+    closure.status = 'done';
+    await closure.save();
+
+    if (closure.postAgreed) {
+      const templates = await buildPostTemplates(closure);
+      const seeker = await User.findById(closure.seekerId).select('name');
+      await Notification.create(buildClosureNotification(closure, seeker, templates));
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Closure answer error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Notifications ───────────────────────────────────────────────────────────
+
+// List this user's notifications (newest first).
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.set('Cache-Control', 'no-store');
+    res.json({ notifications });
+  } catch (error) {
+    console.error('Notifications error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+  try {
+    await Notification.updateOne({ _id: req.params.id, userId: req.user.userId }, { $set: { read: true } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Notification read error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/notifications/read-all', authenticateToken, async (req, res) => {
+  try {
+    await Notification.updateMany({ userId: req.user.userId, read: false }, { $set: { read: true } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Notification read-all error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
 });
 
 // Serve the built frontend (production) with an SPA fallback so direct URL

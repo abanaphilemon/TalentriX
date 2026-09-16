@@ -112,6 +112,7 @@ export default function VideoCallPage() {
   const [err, setErr] = useState('');
   const [interview, setInterview] = useState(null);
   const [roomMode, setRoomMode] = useState(null); // 'interview' (admin meeting) | 'call' (instant chat call)
+  const [roomPartnerId, setRoomPartnerId] = useState(null); // partner user id for chat calls
   const [otherName, setOtherName] = useState(isAdmin ? currentName || 'Admin' : 'Site Administrator');
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
@@ -784,6 +785,7 @@ export default function VideoCallPage() {
           modeRef.current = 'call';
           setRoomMode('call');
           setOtherName(callInfo.partner?.name || callInfo.partner?.id || '');
+          if (callInfo.partner?.id) setRoomPartnerId(callInfo.partner.id);
         }
       } catch { /* not a call — fall through to interview */ }
 
@@ -1116,6 +1118,21 @@ export default function VideoCallPage() {
       } catch { /* ignore */ }
     }
     updateStatus('ended');
+  };
+
+  // Return to the chat that launched a call. The tab was opened with
+  // window.open, so closing it drops us straight back into the open chat tab.
+  // Fallback: land on the dashboard with ?chat=<partner> which re-opens the chat.
+  const goBackFromCall = () => {
+    if (roomMode === 'call' && window.opener) {
+      window.close();
+      return;
+    }
+    if (roomMode === 'call' && roomPartnerId) {
+      navigate(role === 'seeker' ? `/dashboard/seeker?chat=${roomPartnerId}` : `/dashboard/employer?chat=${roomPartnerId}`);
+      return;
+    }
+    navigate(isAdmin ? '/admin' : '/interview');
   };
 
   /* ── Draggable PiP logic ────────────────────────────────────────────── */
@@ -1504,7 +1521,7 @@ export default function VideoCallPage() {
                 {isAdmin && (
                   <button onClick={() => endCall(true)} className="btn-primary w-full justify-center">Mark interview complete &amp; unlock dashboard</button>
                 )}
-                <button onClick={() => navigate(isAdmin ? '/admin' : roomMode === 'call' ? (role === 'seeker' ? '/dashboard/seeker' : '/dashboard/employer') : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
+                <button onClick={goBackFromCall} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors">
                   <ArrowLeft className="w-4 h-4" /> {isAdmin ? 'Back to admin panel' : roomMode === 'call' ? 'Back to chat' : 'Back to interview page'}
                 </button>
               </div>
@@ -1521,7 +1538,7 @@ export default function VideoCallPage() {
               </div>
               <h1 className="font-display text-2xl font-bold">Could not start the call</h1>
               <p className="text-white/60 text-sm mt-2">{err}</p>
-              <button onClick={() => navigate(isAdmin ? '/admin' : roomMode === 'call' ? (role === 'seeker' ? '/dashboard/seeker' : '/dashboard/employer') : '/interview')} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors mt-6">
+              <button onClick={goBackFromCall} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition-colors mt-6">
                 <ArrowLeft className="w-4 h-4" /> Go back
               </button>
             </div>
