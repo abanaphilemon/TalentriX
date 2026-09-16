@@ -64,7 +64,7 @@ export default function EmployerDashboard() {
   const { user, signOut } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
-  const [tab, setTab] = useState('seekers'); // 'seekers' | 'profile'
+  const [tab, setTab] = useState('requestTalent'); // 'requestTalent' | 'seekers' | 'profile' — talent requests load first
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

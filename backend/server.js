@@ -662,6 +662,13 @@ async function seedSite() {
     { $set: { status: 'approved', active: true } }
   );
 
+  // Employers no longer need admin approval — approve any that are still
+  // pending so they aren't locked out of their dashboard.
+  await User.updateMany(
+    { role: 'employer', status: 'pending' },
+    { $set: { status: 'approved', active: true } }
+  );
+
   // Accounts that existed before onboarding was introduced already know the app —
   // skip onboarding for them.
   await User.updateMany(
@@ -834,6 +841,12 @@ app.post('/api/register', async (req, res) => {
     }
 
     const user = new User({ name, email, password, role, hubRef: hubCode, hubId });
+    // Employers don't need admin approval — approve them at registration so
+    // they can use the dashboard immediately.
+    if (role === 'employer') {
+      user.status = 'approved';
+      user.active = true;
+    }
     await user.save();
 
     // Chat keys are automatic — every account gets a keypair right away.
@@ -1915,14 +1928,15 @@ const SupportTicket = mongoose.model('SupportTicket', new mongoose.Schema({
 
 // Employer reviews of talent they have previously unlocked (paid chat).
 // Displayed at the bottom of the talent's public portfolio.
-const TalentReview = mongoose.model('TalentReview', new mongoose.Schema({
+const talentReviewSchema = new mongoose.Schema({
   employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   rating: { type: Number, min: 1, max: 5, required: true },
   review: { type: String, default: '', trim: true, maxlength: 1000 },
   createdAt: { type: Date, default: Date.now },
-}));
-TalentReview.index({ employerId: 1, seekerId: 1 }, { unique: true });
+});
+talentReviewSchema.index({ employerId: 1, seekerId: 1 }, { unique: true });
+const TalentReview = mongoose.model('TalentReview', talentReviewSchema);
 
 function ticketInfo(t) {
   return {
