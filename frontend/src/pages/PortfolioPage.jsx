@@ -126,12 +126,25 @@ export default function PortfolioPage() {
     // Employers must pay to unlock chat with each job seeker.
     if (me?.role === 'employer' && String(me.id) !== String(id) && !paid) {
       setPayMsg('');
-      setPayModal(true);
-      // Re-fetch pricing every time the modal opens so admin-side changes show up.
-      fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } })
+      // Live-check with the backend — it reconciles the latest pending
+      // transaction with Monnify, so a charge that already succeeded is
+      // never shown as locked again.
+      fetch(`${API_URL}/payment/check/${id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => d && setPayPrice(d))
-        .catch(() => {});
+        .then((d) => {
+          if (d?.paid) {
+            setPaid(true);
+            setChatOpen(true);
+            return;
+          }
+          setPayModal(true);
+          // Re-fetch pricing every time the modal opens so admin-side changes show up.
+          fetch(`${API_URL}/payment/price`, { headers: { Authorization: `Bearer ${token}` } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((pd) => pd && setPayPrice(pd))
+            .catch(() => {});
+        })
+        .catch(() => setPayModal(true));
       return;
     }
     setChatOpen(true);

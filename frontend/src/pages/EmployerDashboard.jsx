@@ -309,15 +309,27 @@ export default function EmployerDashboard() {
     }
   };
 
-  const openChat = (seed, force = false) => {
+  const openChat = async (seed, force = false) => {
     // Payment gate: if seeding a specific seeker, check if paid
     if (!force && seed && !paidSeekers.has(seed)) {
       const seeker = seekers.find((s) => s.id === seed);
-      if (seeker) {
-        setPayModal(seeker);
-        // Re-fetch pricing every time the modal opens so admin-side changes show up.
-        refreshPrice();
-        return;
+      // Live-check with the backend — it reconciles the latest pending
+      // transaction with Monnify, so a charge that already succeeded is
+      // never shown as locked again.
+      let unlocked = false;
+      try {
+        const res = await fetch(`${API_URL}/payment/check/${seed}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (res.ok) unlocked = !!(await res.json()).paid;
+      } catch { /* ignore */ }
+      if (!unlocked) {
+        if (seeker) {
+          setPayModal(seeker);
+          // Re-fetch pricing every time the modal opens so admin-side changes show up.
+          refreshPrice();
+          return;
+        }
+      } else {
+        setPaidSeekers((prev) => new Set([...prev, seed]));
       }
     }
     setChatSeed(seed || null);

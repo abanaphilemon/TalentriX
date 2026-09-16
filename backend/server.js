@@ -1815,6 +1815,36 @@ async function monnifyToken() {
   return { token: d.responseBody?.accessToken || null, baseUrl };
 }
 
+// Query Monnify for a single transaction and update the local record's status.
+// Returns 'paid'/'failed' when confirmed, otherwise null (unknown/unreachable).
+async function syncPayment(record) {
+  if (!record?.paymentRef) return null;
+  const cfg = await getConfig('monnify');
+  if (!cfg?.apiKey || !cfg?.secretKey) return null;
+  const auth = await monnifyToken();
+  if (!auth?.token) return null;
+  const res = await fetch(
+    `${auth.baseUrl}/api/v1/merchant/transactions/query?paymentReference=${encodeURIComponent(record.paymentRef)}`,
+    { headers: { Authorization: `Bearer ${auth.token}` } },
+  );
+  if (!res.ok) return null;
+  const d = await res.json();
+  const tx = d.responseBody;
+  if (tx?.paymentStatus === 'PAID') {
+    record.status = 'paid';
+    record.monnifyRef = tx.transactionReference || '';
+    record.paidAt = new Date();
+    await record.save();
+    return 'paid';
+  }
+  if (tx?.paymentStatus === 'FAILED') {
+    record.status = 'failed';
+    await record.save();
+    return 'failed';
+  }
+  return null;
+}
+
 // ── Admin: user management ─────────────────────────────────────────────────
 
 // List every account with optional role/status/active filters and free-text
@@ -2580,11 +2610,22 @@ app.get('/api/payment/price', authenticateToken, async (req, res) => {
 app.get('/api/payment/check/:seekerId', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
-    const existing = await ChatPayment.findOne({
+    let existing = await ChatPayment.findOne({
       employerId: req.user.userId,
       seekerId: req.params.seekerId,
       status: 'paid',
     });
+    // Even if our record is still 'pending', the charge may already be settled
+    // on Monnify (e.g. redirect callback or webhook was missed). Reconcile it
+    // here so a paid chat unlocks without asking the employer to pay again.
+    if (!existing) {
+      const pending = await ChatPayment.findOne({
+        employerId: req.user.userId,
+        seekerId: req.params.seekerId,
+        status: 'pending',
+      });
+      if (pending && (await syncPayment(pending)) === 'paid') existing = pending;
+    }
     res.set('Cache-Control', 'no-store');
     res.json({ paid: !!existing });
   } catch (error) {
@@ -2679,28 +2720,9 @@ app.get('/api/payment/verify/:paymentRef', authenticateToken, async (req, res) =
     const record = await ChatPayment.findOne({ paymentRef: req.params.paymentRef });
     if (!record) return res.status(404).json({ message: 'Payment not found' });
     if (record.status === 'paid') return res.json({ paid: true });
-
-    const cfg = await getConfig('monnify');
-    if (!cfg?.apiKey || !cfg?.secretKey) return res.status(503).json({ message: 'Payment not configured.' });
-
-    const monnifyAuth = await monnifyToken();
-    if (!monnifyAuth?.token) return res.status(503).json({ message: 'Could not connect to payment provider.' });
-    const { token: monoToken, baseUrl } = monnifyAuth;
-
-    const monoRes = await fetch(
-      `${baseUrl}/api/v1/merchant/transactions/query?paymentReference=${record.paymentRef}`,
-      { headers: { Authorization: `Bearer ${monoToken}` } },
-    );
-    const monoData = await monoRes.json();
-    const tx = monoData.responseBody;
-    if (tx && tx.paymentStatus === 'PAID') {
-      record.status = 'paid';
-      record.monnifyRef = tx.transactionReference || '';
-      record.paidAt = new Date();
-      await record.save();
-      return res.json({ paid: true });
-    }
-    res.json({ paid: false });
+    res.set('Cache-Control', 'no-store');
+    const status = await syncPayment(record);
+    res.json({ paid: status === 'paid' });
   } catch (error) {
     console.error('Payment verify error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -2738,6 +2760,14 @@ app.post('/api/payment/webhook', async (req, res) => {
 app.get('/api/payment/my-payments', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'employer') return res.status(403).json({ message: 'Employer only' });
+    // Reconcile any pending payments against Monnify so a successful charge
+    // unlocks chat even if the redirect callback or webhook was missed.
+    const pending = await ChatPayment.find({ employerId: req.user.userId, status: 'pending' });
+    for (const p of pending) {
+      try {
+        if (await syncPayment(p)) { /* status updated */ }
+      } catch { /* ignore per-record */ }
+    }
     const payments = await ChatPayment.find({ employerId: req.user.userId, status: 'paid' })
       .select('seekerId amount paidAt')
       .lean();
