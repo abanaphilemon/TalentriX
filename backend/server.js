@@ -509,24 +509,26 @@ const TalentRequest = mongoose.model('TalentRequest', new mongoose.Schema({
 const DEFAULT_SITE = {
   branding: {
     name: 'TalentriX',
-    tagline: 'A · I',
+    tagline: 'VERIFIED TALENT',
     logo: '',
   },
   hero: {
-    badge: 'AI-POWERED RECRUITMENT',
+    badge: 'VERIFIED TALENT MARKETPLACE',
     titlePrefix: 'Hire ',
-    titleHighlight: 'extraordinary',
-    titleSuffix: 'talent, faster.',
+    titleHighlight: 'verified',
+    titleSuffix: ' talent, securely.',
     subtitle:
-      'TalentriX matches you with pre-vetted candidates in days, not months. Our models read beyond the resume — surfacing people who truly fit your team.',
+      'TalentriX connects you with job seekers who are already approved, interviewed, and interview-ready. Every candidate runs a live public portfolio — then chat privately in an end-to-end-encrypted room and hop on a video call before you decide.',
     ctaPrimary: 'Get Started',
     ctaSecondary: 'See How It Works',
     image: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1200&auto=format&fit=crop&q=70',
+    badgeCardTitle: 'Verified Talent',
+    badgeCardSub: 'Approved & interviewed',
   },
   heroStats: [
-    { value: '50K+', label: 'Talent Matches' },
-    { value: '92%', label: 'Placement Success' },
-    { value: '1,200+', label: 'Partner Companies' },
+    { value: '100%', label: 'Vetted' },
+    { value: 'E2E', label: 'Encrypted' },
+    { value: 'Live', label: 'Portfolios' },
   ],
   navLinks: [
     { label: 'Home', href: '#home' },
@@ -537,23 +539,23 @@ const DEFAULT_SITE = {
   ],
   about: {
     eyebrow: 'About TalentriX',
-    title: 'Recruitment, ',
-    titleHighlight: 'reimagined',
-    titleSuffix: ' by humans and machines.',
-    body: 'We built TalentriX because hiring the best people should not be a privilege of the biggest companies. Our platform pairs advanced language models with human recruiters to bring speed, fairness, and clarity to every search.',
+    title: 'Recruitment that finally ',
+    titleHighlight: 'respects everyone',
+    titleSuffix: '.',
+    body: 'TalentriX is a secure talent marketplace. Job seekers build a polished public portfolio and are approved and interviewed by our team before they join the pool. Talent hubs invite and endorse their members and publish grants. Employers search vetted talent, unlock a private chat for a small one-off connect fee, and meet candidates over a built-in video call before they commit.',
     image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&auto=format&fit=crop&q=70',
   },
   features: [
-    { title: 'Smart Matching', desc: 'LLM-powered models read résumés, projects, and culture cues to surface the right person.' },
-    { title: 'Precision Sourcing', desc: "Reach passive candidates you'd never find on traditional platforms." },
-    { title: '10x Faster', desc: 'Cut your time-to-hire by 80% with automated screening and ranking.' },
-    { title: 'Bias Audited', desc: 'Every model decision is logged and audited to keep hiring fair and explainable.' },
+    { title: 'Human-Vetted Talent', desc: 'Every job seeker is approved by an administrator and completes an onboarding interview before entering the talent pool — so employers meet people who are genuinely ready to talk.' },
+    { title: 'Secure Paid Chat', desc: 'Chat privately with a candidate through end-to-end encrypted messaging, unlocked by a small one-off connect fee. No subscription, no surprise costs.' },
+    { title: 'Public Portfolios', desc: 'Each candidate runs a polished public portfolio — experience, projects, skills, certifications, and hub endorsements — all in one shareable link.' },
+    { title: 'Hubs & Endorsements', desc: 'Talent hubs grow their own community through a unique invite link, endorse their members, and publish grants their talent can apply for.' },
   ],
   cta: {
-    title: 'The future of hiring is ',
-    titleHighlight: 'already here.',
-    body: 'Join 1,200+ companies using TalentriX to build world-class teams in record time.',
-    buttonText: 'Book a Demo',
+    title: 'The right talent is ',
+    titleHighlight: 'one chat away.',
+    body: 'Sign up free, browse the vetted talent pool, and start a secure conversation with your next hire — no subscription or long-term contract.',
+    buttonText: 'Get in Touch',
   },
   reviewsHeading: {
     eyebrow: 'Visitor Reviews',
@@ -563,9 +565,9 @@ const DEFAULT_SITE = {
     body: '',
   },
   partnersHeading: {
-    eyebrow: 'Trusted By Industry Leaders',
-    title: 'Powering hiring at ',
-    titleHighlight: 'amazing companies.',
+    eyebrow: 'From Hubs & Employers',
+    title: 'Real partners. ',
+    titleHighlight: 'Real momentum.',
   },
   collaborators: [
     { name: 'Google', logo: 'https://cdn.simpleicons.org/google/000000' },
@@ -577,8 +579,8 @@ const DEFAULT_SITE = {
   ],
   footer: {
     brandTagline:
-      'AI-powered recruitment that connects exceptional people with the teams who need them.',
-    newsletterBlurb: 'Monthly insights on AI, hiring, and the future of work.',
+      'Secure verified talent — hubs nurture communities, employers connect, and job seekers build their careers.',
+    newsletterBlurb: 'New hires, product updates, and what the talent pool is up to.',
     quickLinksTitle: 'Quick Links',
     quickLinks: [
       { label: 'Home', href: '#home' },
@@ -603,7 +605,7 @@ const DEFAULT_SITE = {
     eyebrow: 'Get In Touch',
     title: "Let's build your ",
     titleHighlight: 'dream team.',
-    body: "Tell us what you're building — we'll be in touch within one business day.",
+    body: "Questions about joining as a candidate, hub, or employer? We'll be in touch within one business day.",
     officeHours: 'Mon–Fri, 9am–6pm PST. We respond to every message within one business day.',
   },
 };
@@ -689,6 +691,21 @@ async function seedSite() {
     doc = new SiteContent({ key: 'landing', ...cloneDefaults() });
     await doc.save();
     console.log('Seeded default site content');
+    return;
+  }
+
+  // ── Migration: overwrite stale defaults from older builds ──
+  // If the hero badge is still the old AI-powered copy, all text content
+  // predates the verified-talent rewrite and should be force-replaced so
+  // the landing page no longer flickers between old and new on reload.
+  const STALE_HERO_BADGE = 'AI-POWERED RECRUITMENT';
+  if (doc.hero && doc.hero.badge === STALE_HERO_BADGE) {
+    const fresh = cloneDefaults();
+    for (const k of Object.keys(fresh)) {
+      doc[k] = fresh[k];
+    }
+    await doc.save();
+    console.log('Migrated stale site content to verified-talent defaults');
     return;
   }
 
