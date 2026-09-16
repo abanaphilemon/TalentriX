@@ -134,6 +134,11 @@ export default function PortfolioPage() {
         .then((d) => {
           if (d?.paid) {
             setPaid(true);
+            // Re-fetch with the token so contact details unlock on this page too.
+            fetch(`${API_URL}/public/profile/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((pd) => pd && setP(pd.portfolio))
+              .catch(() => {});
             setChatOpen(true);
             return;
           }
@@ -176,6 +181,11 @@ export default function PortfolioPage() {
       if (d.paid) {
         setPaid(true);
         setPayModal(false);
+        // Re-fetch with the token so contact details unlock on this page too.
+        fetch(`${API_URL}/public/profile/${id}`, { headers: { Authorization: `Bearer ${token}` } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((pd) => pd && setP(pd.portfolio))
+          .catch(() => {});
         setChatOpen(true);
         return;
       }
@@ -197,7 +207,7 @@ export default function PortfolioPage() {
     setLoading(true);
     setNotFound(false);
     setP(null);
-    fetch(`${API_URL}/public/profile/${id}`)
+    fetch(`${API_URL}/public/profile/${id}`, token ? { headers: { Authorization: `Bearer ${token}` } } : {})
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => active && setP(d.portfolio))
       .catch(() => active && setNotFound(true))
@@ -205,7 +215,7 @@ export default function PortfolioPage() {
     return () => {
       active = false;
     };
-  }, [id]);
+  }, [id, token]);
 
   const stats = useMemo(() => {
     if (!p) return [];

@@ -25,6 +25,10 @@ import {
   CreditCard,
   AlertTriangle,
   Target,
+  Mail,
+  Phone,
+  Github,
+  Globe,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -260,6 +264,7 @@ export default function EmployerDashboard() {
       const d = await res.json();
       if (d.paid) {
         loadPaymentInfo();
+        loadSeekers();
         const target = seekerId || pendingSeeker?.id;
         setPayMsg(target
           ? `Payment confirmed! Opening chat with ${pendingSeeker?.name || 'this job seeker'}…`
@@ -292,6 +297,7 @@ export default function EmployerDashboard() {
       const d = await res.json();
       if (d.paid) {
         setPaidSeekers((prev) => new Set([...prev, seeker.id]));
+        setSeekers((prev) => prev.map((s) => (s.id === seeker.id ? { ...s, contactLocked: false } : s)));
         setPayModal(null);
         openChat(seeker.id);
         return;
@@ -330,6 +336,7 @@ export default function EmployerDashboard() {
         }
       } else {
         setPaidSeekers((prev) => new Set([...prev, seed]));
+        setSeekers((prev) => prev.map((s) => (s.id === seed ? { ...s, contactLocked: false } : s)));
       }
     }
     setChatSeed(seed || null);
@@ -741,10 +748,17 @@ export default function EmployerDashboard() {
                 <div>
                   <h3 className="font-display text-xl font-bold">{viewing.name}</h3>
                   <p className="text-white/70 text-sm">
-                    <span className="inline-flex items-center gap-1" title="Contact details unlock once you connect in the secure chat">
-                      <Lock className="w-3 h-3 shrink-0" />
-                      <span>••••••@•••••</span>
-                    </span>
+                    {viewing.contactLocked ? (
+                      <span className="inline-flex items-center gap-1" title="Contact details unlock after payment">
+                        <Lock className="w-3 h-3 shrink-0" />
+                        <span>••••••@•••••</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        <Mail className="w-3 h-3 shrink-0" />
+                        <a href={`mailto:${viewing.email}`} className="underline">{viewing.email}</a>
+                      </span>
+                    )}
                   </p>
                   {viewing.title && <p className="text-white/60 text-sm mt-0.5">{viewing.title}</p>}
                 </div>
@@ -803,13 +817,45 @@ export default function EmployerDashboard() {
                 </div>
               )}
 
-              {viewing.contactLocked && (
+              {viewing.contactLocked ? (
                 <div className="flex items-start gap-2 text-xs text-secondary bg-secondary/5 border border-secondary/10 rounded-xl px-3 py-2.5">
                   <Lock className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
                   <p>
-                    Contact details are hidden until you connect. Start a secure chat — once they reply, their email,
-                    phone and links unlock here.
+                    Contact details are hidden until you pay to unlock chat with this job seeker.
                   </p>
+                </div>
+              ) : (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                  <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-emerald-700 mb-2">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Contact details unlocked
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    {viewing.email && (
+                      <a href={`mailto:${viewing.email}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary hover:text-primary transition-colors" title="Email">
+                        <Mail className="w-4 h-4 text-primary" /> {viewing.email}
+                      </a>
+                    )}
+                    {viewing.phone && (
+                      <a href={`tel:${viewing.phone.replace(/[^\d+]/g, '')}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary hover:text-primary transition-colors" title="Phone">
+                        <Phone className="w-4 h-4 text-primary" /> {viewing.phone}
+                      </a>
+                    )}
+                    {viewing.linkedin && (
+                      <a href={viewing.linkedin} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary hover:text-primary transition-colors" title="LinkedIn">
+                        <LinkIcon className="w-4 h-4 text-primary" /> LinkedIn
+                      </a>
+                    )}
+                    {viewing.github && (
+                      <a href={viewing.github} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary hover:text-primary transition-colors" title="GitHub">
+                        <Github className="w-4 h-4 text-primary" /> GitHub
+                      </a>
+                    )}
+                    {viewing.website && (
+                      <a href={viewing.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-secondary hover:text-primary transition-colors" title="Website">
+                        <Globe className="w-4 h-4 text-primary" /> Website
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
 

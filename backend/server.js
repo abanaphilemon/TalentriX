@@ -1248,10 +1248,18 @@ app.get('/api/seekers', authenticateToken, async (req, res) => {
     // always replaced with a mask here.
     const me = req.user.userId;
     const hubNameBy = await hubNameMapFor(seekers);
+    const paidIds = new Set(
+      (await ChatPayment.find({ employerId: me, status: 'paid' }).select('seekerId').lean())
+        .map((p) => String(p.seekerId)),
+    );
     const out = await Promise.all(
       seekers.map(async (s) => {
         const pu = publicUser(s);
         pu.hubName = hubNameBy.get(String(s.hubId)) || '';
+        if (paidIds.has(String(s._id))) {
+          pu.contactLocked = false;
+          return pu;
+        }
         return lockContacts(pu);
       })
     );
@@ -1487,40 +1495,57 @@ app.get('/api/public/profile/:id', async (req, res) => {
         };
       }
     }
-    res.json({
-      portfolio: lockContacts({
-        id: user._id,
-        name: user.name,
-        avatar: user.avatar,
-        title: user.title,
-        pronouns: user.pronouns,
-        email: user.email,
-        phone: user.phone,
-        location: user.location,
-        availability: user.availability,
-        company: user.company,
-        linkedin: user.linkedin,
-        github: user.github,
-        website: user.website,
-        skills: user.skills,
-        languages: user.languages,
-        summary: user.summary,
-        bio: user.bio,
-        experience: Array.isArray(user.experience) ? user.experience : [],
-        education: Array.isArray(user.education) ? user.education : [],
-        certifications: Array.isArray(user.certifications) ? user.certifications : [],
-        projects: Array.isArray(user.projects) ? user.projects : [],
-        resumeLink: user.resumeLink,
-        cv: user.cv,
-        endorsement: {
-          hub,
-          rating: user.hubRating || 0,
-          recommend: !!user.hubRecommend,
-          note: user.hubNote,
-        },
-        createdAt: user.createdAt,
-      }),
-    });
+    const raw = {
+      id: user._id,
+      name: user.name,
+      avatar: user.avatar,
+      title: user.title,
+      pronouns: user.pronouns,
+      email: user.email,
+      phone: user.phone,
+      location: user.location,
+      availability: user.availability,
+      company: user.company,
+      linkedin: user.linkedin,
+      github: user.github,
+      website: user.website,
+      skills: user.skills,
+      languages: user.languages,
+      summary: user.summary,
+      bio: user.bio,
+      experience: Array.isArray(user.experience) ? user.experience : [],
+      education: Array.isArray(user.education) ? user.education : [],
+      certifications: Array.isArray(user.certifications) ? user.certifications : [],
+      projects: Array.isArray(user.projects) ? user.projects : [],
+      resumeLink: user.resumeLink,
+      cv: user.cv,
+      endorsement: {
+        hub,
+        rating: user.hubRating || 0,
+        recommend: !!user.hubRecommend,
+        note: user.hubNote,
+      },
+      createdAt: user.createdAt,
+    };
+    // If the viewer is an employer who has paid for this seeker, reveal
+    // contact details instead of masking them behind lockContacts().
+    let paid = false;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.slice(7);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.role === 'employer') {
+          paid = !!(await ChatPayment.findOne({
+            employerId: decoded.userId,
+            seekerId: String(user._id),
+            status: 'paid',
+          }));
+        }
+      } catch { /* invalid/expired token — treat as anonymous */ }
+    }
+    const portfolio = paid ? raw : lockContacts(raw);
+    res.json({ portfolio });
   } catch (error) {
     console.error('Portfolio error:', error);
     res.status(500).json({ message: 'Server error' });
