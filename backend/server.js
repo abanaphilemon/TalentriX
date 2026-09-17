@@ -35,35 +35,80 @@ if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
 // The platform's outgoing mail. The admin can override delivery from the
 // panel (SiteConfig('email')); anything unset falls back to the env SMTP.
 // Env credentials beat nothing, so development without a server still works.
-async function platformMailConfig() {
+
+// Gmail/Outlook/Microsoft only accept SMTP on 465 (implicit TLS) and 587
+// (STARTTLS) — never 25. Pulling a saved endpoint back to those canonical
+// pairs prevents "connection timeout" for the most common misconfigurations.
+function normalizeSmtpEndpoint(host, port, secure) {
+  const h = String(host || '').trim().toLowerCase();
+  const p = Number(port == null || String(port).trim() === '' ? 587 : port);
+  const s = !!secure;
+  const canonical = p === 465 ? true : p === 587 ? false : s;
+  if (h.endsWith('.gmail.com') || h === 'gmail.com' || h.endsWith('.googlemail.com') || h === 'googlemail.com') {
+    return { port: [465, 587].includes(p) ? p : 587, secure: p === 587 ? false : true };
+  }
+  if (/(^|\.)(outlook|office365|hotmail|live)\.com$|microsoft.*smtp|smtp-mail\.outlook/.test(h)) {
+    return { port: [465, 587].includes(p) ? p : 587, secure: p === 587 ? false : true };
+  }
+  return { port: p, secure: canonical };
+}
+
+// Builds the ordered list of SMTP endpoints to try: the saved one first, then
+// its TLS-flipped partner (a port/SSL toggle mismatch), then the standard
+// 587-STARTTLS and 465-implicit-TLS endpoints. Dedupes so a healthy saved
+// config only ever attempts its own endpoint.
+function smtpCandidates(host, port, secure, user, pass) {
+  const make = (p, s) => ({
+    port: p,
+    secure: s,
+    describe: `smtp://${host}:${p} ${s ? 'implicit TLS' : 'STARTTLS'}`,
+    transport: nodemailer.createTransport({
+      host,
+      port: p,
+      secure: s,
+      auth: { user, pass },
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 60000,
+    }),
+  });
+  const seen = new Set();
+  const list = [];
+  const add = (p, s) => {
+    const k = `${p}:${s}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    list.push(make(p, s));
+  };
+  add(port, secure);
+  add(port, !secure);
+  add(587, false);
+  add(465, true);
+  return list.slice(0, 4);
+}
+
+async function platformMailConfig(normalize = true) {
   try {
     const cfg = (await getConfig('email')) || {};
     if (cfg.host && (cfg.user || cfg.email) && cfg.password) {
       const user = String(cfg.user || cfg.email).trim();
-      const host = cfg.host;
-      const port = Number(cfg.port || 587);
-      const secure = !!cfg.secure;
+      const host = String(cfg.host).trim();
+      const { port, secure } = normalize
+        ? normalizeSmtpEndpoint(host, cfg.port, cfg.secure)
+        : { port: Number(cfg.port || 587), secure: !!cfg.secure };
       const pass = decryptSecret(cfg.password);
-      // `secure:false` uses STARTTLS (Brevo: port 587); `secure:true` is
-      // implicit TLS (port 465). We also provide a `fallback` transport with
-      // the opposite mode so a port<->SSL mismatch in the admin settings can't
-      // silently kill delivery — Brevo accepts both.
-      const makeTransport = (tls) =>
-        nodemailer.createTransport({
-          host,
-          port,
-          secure: tls,
-          auth: { user, pass },
-          connectionTimeout: 20000,
-          greetingTimeout: 20000,
-          socketTimeout: 60000,
-        });
+      // Persist the corrected endpoint once so the admin panel shows the
+      // working port/SSL values instead of the stale saved ones.
+      if (normalize && (port !== Number(cfg.port || 587) || secure !== !!cfg.secure)) {
+        const fixed = { ...cfg, port, secure };
+        setConfig('email', fixed).catch(() => {});
+      }
       return {
         name: String(cfg.fromName || 'TalentriX').trim() || 'TalentriX',
         addr: user || SMTP_USER || 'noreply@talentri-x.vercel.app',
         describe: `smtp://${host}:${port} ${secure ? 'implicit TLS' : 'STARTTLS'}`,
-        transport: makeTransport(secure),
-        fallback: makeTransport(!secure),
+        candidates: smtpCandidates(host, port, secure, user, pass),
+        saved: cfg,
       };
     }
   } catch {
@@ -74,8 +119,8 @@ async function platformMailConfig() {
       name: 'TalentriX',
       addr: SMTP_USER || 'noreply@talentri-x.vercel.app',
       describe: 'env SMTP',
-      transport: transporter,
-      fallback: null,
+      candidates: [{ describe: 'env SMTP', transport: transporter, port: null, secure: null }],
+      saved: null,
     };
   }
   return null;
@@ -91,29 +136,39 @@ async function sendMail({ to, subject, html, debug } = {}) {
       : false;
   }
   const from = `"${conf.name}" <${conf.addr}>`;
-  const attempt = (transport) => transport.sendMail({ from, to, subject, html });
-  // Errors that look like a connection/TLS problem. A port<->TLS mismatch
-  // (e.g. port 465 saved with the SSL box off, or 587 with it on) surfaces as
-  // one of these and is auto-recovered by the fallback transport.
+  // Errors that look like a connection/TLS problem. Bad ports (e.g. Gmail on
+  // 25), or a port<->TLS toggle mismatch, surface as one of these — the send
+  // then walks the next candidate in the chain instead of giving up.
   const TLSISH = /timeout|greeting|tls|ssl|handshake|socket hang|protocol|connect e|eproto|wrong version|reset by peer|econnreset/i;
-  try {
-    await attempt(conf.transport);
-    console.log(`[email:sent] to=${to} subject="${subject}" via ${conf.describe}`);
-    return debug ? { ok: true, via: conf.describe } : true;
-  } catch (primaryError) {
-    if (conf.fallback && TLSISH.test(primaryError.message)) {
-      try {
-        await attempt(conf.fallback);
-        console.log(`[email:sent] to=${to} subject="${subject}" via ${conf.describe} (flipped TLS)`);
-        return debug ? { ok: true, via: `${conf.describe} (flipped TLS mode)` } : true;
-      } catch (fallbackError) {
-        console.error('[email:error]', primaryError.message, '| fallback:', fallbackError.message);
-        return debug ? { ok: false, error: `${fallbackError.message} (primary: ${primaryError.message})` } : false;
-      }
+  let lastError = null;
+  let used = null;
+  for (const cand of conf.candidates) {
+    try {
+      await cand.transport.sendMail({ from, to, subject, html });
+      used = cand;
+      break;
+    } catch (error) {
+      lastError = error;
+      console.error(`[email:error] ${cand.describe}`, error.message.split('\n')[0]);
+      if (!TLSISH.test(error.message)) break; // auth/reject errors won't fix by switching ports
     }
-    console.error('[email:error]', primaryError.message);
-    return debug ? { ok: false, error: primaryError.message } : false;
   }
+  if (!used) {
+    return debug ? { ok: false, error: lastError?.message || 'SMTP send failed' } : false;
+  }
+
+  // A candidate other than the saved config worked → persist the working
+  // port/TLS mode so the next send goes straight to it (self-healing).
+  const primary = conf.candidates[0];
+  let corrected = false;
+  if (conf.saved && (used.port !== primary.port || used.secure !== primary.secure)) {
+    try {
+      await setConfig('email', { ...conf.saved, port: used.port, secure: used.secure });
+      corrected = true;
+    } catch { /* non-fatal */ }
+  }
+  console.log(`[email:sent] to=${to} subject="${subject}" via ${used.describe}${corrected ? ' (saved corrected port/TLS)' : ''}`);
+  return debug ? { ok: true, via: used.describe + (corrected ? ' (corrected in settings)' : '') } : true;
 }
 
 // ── Account verification & 2FA (email codes) ────────────────────────────────
@@ -3648,7 +3703,9 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
       else if (!value.apiKey && existing.apiKey) value.apiKey = existing.apiKey;
     }
     // Platform email (SMTP): preserve untouched fields, keep the existing
-    // password when a blank one arrives, encrypt new ones at rest.
+    // password when a blank one arrives, encrypt new ones at rest. The
+    // host/port/secure triple is normalised so providers like Gmail never get
+    // a non-working endpoint (e.g. port 25) persisted.
     if (req.params.key === 'email') {
       const existing = (await getConfig('email')) || {};
       // Normalise to `email` + `user` (same value). The admin UI sends the
@@ -3656,11 +3713,12 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
       // keep both in sync so either one always resolves to the SMTP login.
       const v = { ...existing, ...value };
       v.host = String(v.host || '').trim();
-      v.port = Number(v.port == null ? 587 : v.port);
-      v.secure = !!v.secure;
+      v.fromName = String(v.fromName || '').trim();
+      const { port, secure } = normalizeSmtpEndpoint(v.host, v.port, v.secure);
+      v.port = port;
+      v.secure = secure;
       v.email = String(v.email || v.user || '').trim();
       v.user = v.email;
-      v.fromName = String(v.fromName || '').trim();
       if (req.body.clearPassword === true) v.password = '';
       else if (String(value.password || '').trim()) v.password = encryptSecret(String(value.password).trim());
       else if (!v.password) v.password = existing.password || '';
