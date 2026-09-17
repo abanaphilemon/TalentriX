@@ -40,18 +40,30 @@ async function platformMailConfig() {
     const cfg = (await getConfig('email')) || {};
     if (cfg.host && (cfg.user || cfg.email) && cfg.password) {
       const user = String(cfg.user || cfg.email).trim();
+      const host = cfg.host;
+      const port = Number(cfg.port || 587);
+      const secure = !!cfg.secure;
+      const pass = decryptSecret(cfg.password);
+      // `secure:false` uses STARTTLS (Brevo: port 587); `secure:true` is
+      // implicit TLS (port 465). We also provide a `fallback` transport with
+      // the opposite mode so a port<->SSL mismatch in the admin settings can't
+      // silently kill delivery — Brevo accepts both.
+      const makeTransport = (tls) =>
+        nodemailer.createTransport({
+          host,
+          port,
+          secure: tls,
+          auth: { user, pass },
+          connectionTimeout: 20000,
+          greetingTimeout: 20000,
+          socketTimeout: 60000,
+        });
       return {
         name: String(cfg.fromName || 'TalentriX').trim() || 'TalentriX',
         addr: user || SMTP_USER || 'noreply@talentri-x.vercel.app',
-        transport: nodemailer.createTransport({
-          host: cfg.host,
-          port: Number(cfg.port || 587),
-          secure: !!cfg.secure,
-          auth: { user, pass: decryptSecret(cfg.password) },
-          connectionTimeout: 15000,
-          greetingTimeout: 15000,
-          socketTimeout: 30000,
-        }),
+        describe: `smtp://${host}:${port} ${secure ? 'implicit TLS' : 'STARTTLS'}`,
+        transport: makeTransport(secure),
+        fallback: makeTransport(!secure),
       };
     }
   } catch {
@@ -61,7 +73,9 @@ async function platformMailConfig() {
     return {
       name: 'TalentriX',
       addr: SMTP_USER || 'noreply@talentri-x.vercel.app',
+      describe: 'env SMTP',
       transport: transporter,
+      fallback: null,
     };
   }
   return null;
@@ -69,20 +83,36 @@ async function platformMailConfig() {
 
 async function sendMail({ to, subject, html, debug } = {}) {
   if (!to) return debug ? { ok: false, error: 'No recipient given' } : false;
+  const conf = await platformMailConfig();
+  if (!conf) {
+    console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
+    return debug
+      ? { ok: false, error: 'No SMTP email configured — enter host, sender and password above (or set the SMTP env vars).' }
+      : false;
+  }
+  const from = `"${conf.name}" <${conf.addr}>`;
+  const attempt = (transport) => transport.sendMail({ from, to, subject, html });
+  // Errors that look like a connection/TLS problem. A port<->TLS mismatch
+  // (e.g. port 465 saved with the SSL box off, or 587 with it on) surfaces as
+  // one of these and is auto-recovered by the fallback transport.
+  const TLSISH = /timeout|greeting|tls|ssl|handshake|socket hang|protocol|connect e|eproto|wrong version|reset by peer|econnreset/i;
   try {
-    const conf = await platformMailConfig();
-    if (!conf) {
-      console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
-      return debug
-        ? { ok: false, error: 'No SMTP email configured — enter host, sender and password above (or set the SMTP env vars).' }
-        : false;
+    await attempt(conf.transport);
+    console.log(`[email:sent] to=${to} subject="${subject}" via ${conf.describe}`);
+    return debug ? { ok: true, via: conf.describe } : true;
+  } catch (primaryError) {
+    if (conf.fallback && TLSISH.test(primaryError.message)) {
+      try {
+        await attempt(conf.fallback);
+        console.log(`[email:sent] to=${to} subject="${subject}" via ${conf.describe} (flipped TLS)`);
+        return debug ? { ok: true, via: `${conf.describe} (flipped TLS mode)` } : true;
+      } catch (fallbackError) {
+        console.error('[email:error]', primaryError.message, '| fallback:', fallbackError.message);
+        return debug ? { ok: false, error: `${fallbackError.message} (primary: ${primaryError.message})` } : false;
+      }
     }
-    await conf.transport.sendMail({ from: `"${conf.name}" <${conf.addr}>`, to, subject, html });
-    console.log(`[email:sent] to=${to} subject="${subject}"`);
-    return debug ? { ok: true } : true;
-  } catch (error) {
-    console.error('[email:error]', error.message);
-    return debug ? { ok: false, error: error.message } : false;
+    console.error('[email:error]', primaryError.message);
+    return debug ? { ok: false, error: primaryError.message } : false;
   }
 }
 
@@ -3597,7 +3627,7 @@ app.post('/api/admin/email/test', authenticateToken, async (req, res) => {
     res.json({
       ok: result.ok,
       message: result.ok
-        ? `Test email sent to ${to}.`
+        ? `Test email sent to ${to} (${result.via || 'SMTP'}).`
         : `Could not send: ${result.error || 'check your SMTP details and try again.'}`,
     });
   } catch (error) {
