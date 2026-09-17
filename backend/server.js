@@ -42,15 +42,20 @@ if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
 function normalizeSmtpEndpoint(host, port, secure) {
   const h = String(host || '').trim().toLowerCase();
   const p = Number(port == null || String(port).trim() === '' ? 587 : port);
-  const s = !!secure;
-  const canonical = p === 465 ? true : p === 587 ? false : s;
-  if (h.endsWith('.gmail.com') || h === 'gmail.com' || h.endsWith('.googlemail.com') || h === 'googlemail.com') {
-    return { port: [465, 587].includes(p) ? p : 587, secure: p === 587 ? false : true };
+  const isGmail =
+    h.endsWith('.gmail.com') || h === 'gmail.com' ||
+    h.endsWith('.googlemail.com') || h === 'googlemail.com';
+  const isMicrosoft =
+    /(^|\.)(outlook|office365|hotmail|live)\.com$|microsoft.*smtp|smtp-mail\.outlook/.test(h);
+  if (isGmail || isMicrosoft) {
+    // Invalid ports (e.g. 25) fall back to 587 STARTTLS; valid ones keep the
+    // canonical pairing (465→implicit TLS, 587→STARTTLS).
+    const usePort = [465, 587].includes(p) ? p : 587;
+    return { port: usePort, secure: usePort === 465 };
   }
-  if (/(^|\.)(outlook|office365|hotmail|live)\.com$|microsoft.*smtp|smtp-mail\.outlook/.test(h)) {
-    return { port: [465, 587].includes(p) ? p : 587, secure: p === 587 ? false : true };
-  }
-  return { port: p, secure: canonical };
+  // Generic hosts: 465 is always implicit TLS and 587 always STARTTLS;
+  // otherwise keep whatever was saved.
+  return { port: p, secure: p === 465 ? true : p === 587 ? false : !!secure };
 }
 
 // Builds the ordered list of SMTP endpoints to try: the saved one first, then
@@ -88,8 +93,17 @@ function smtpCandidates(host, port, secure, user, pass) {
 }
 
 async function platformMailConfig(normalize = true) {
+  const out = { provider: 'smtp', brevo: null, smtp: null };
   try {
     const cfg = (await getConfig('email')) || {};
+    const wantProvider = String(cfg.provider || 'smtp').toLowerCase();
+    out.provider = wantProvider === 'brevo' ? 'brevo' : 'smtp';
+    const name = String(cfg.fromName || 'TalentriX').trim() || 'TalentriX';
+    const addr = String(cfg.user || cfg.email || SMTP_USER || 'noreply@talentri-x.vercel.app').trim();
+    if (cfg.apiKey) {
+      const apiKey = decryptSecret(cfg.apiKey);
+      if (apiKey && apiKey.trim()) out.brevo = { name, addr, apiKey: apiKey.trim() };
+    }
     if (cfg.host && (cfg.user || cfg.email) && cfg.password) {
       const user = String(cfg.user || cfg.email).trim();
       const host = String(cfg.host).trim();
@@ -103,9 +117,9 @@ async function platformMailConfig(normalize = true) {
         const fixed = { ...cfg, port, secure };
         setConfig('email', fixed).catch(() => {});
       }
-      return {
-        name: String(cfg.fromName || 'TalentriX').trim() || 'TalentriX',
-        addr: user || SMTP_USER || 'noreply@talentri-x.vercel.app',
+      out.smtp = {
+        name,
+        addr,
         describe: `smtp://${host}:${port} ${secure ? 'implicit TLS' : 'STARTTLS'}`,
         candidates: smtpCandidates(host, port, secure, user, pass),
         saved: cfg,
@@ -114,8 +128,8 @@ async function platformMailConfig(normalize = true) {
   } catch {
     // DB unavailable yet — fall through to env credentials.
   }
-  if (transporter) {
-    return {
+  if (!out.smtp && transporter) {
+    out.smtp = {
       name: 'TalentriX',
       addr: SMTP_USER || 'noreply@talentri-x.vercel.app',
       describe: 'env SMTP',
@@ -123,52 +137,100 @@ async function platformMailConfig(normalize = true) {
       saved: null,
     };
   }
-  return null;
+  if (!out.smtp && !out.brevo) return null;
+  return out;
 }
 
 async function sendMail({ to, subject, html, debug } = {}) {
   if (!to) return debug ? { ok: false, error: 'No recipient given' } : false;
   const conf = await platformMailConfig();
-  if (!conf) {
+  const smtp = conf && conf.smtp;
+  const brevo = conf && conf.brevo;
+  if (!smtp && !brevo) {
     console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
     return debug
-      ? { ok: false, error: 'No SMTP email configured — enter host, sender and password above (or set the SMTP env vars).' }
+      ? { ok: false, error: 'No email provider configured — add SMTP settings or a Brevo API key in the admin panel.' }
       : false;
   }
-  const from = `"${conf.name}" <${conf.addr}>`;
   // Errors that look like a connection/TLS problem. Bad ports (e.g. Gmail on
-  // 25), or a port<->TLS toggle mismatch, surface as one of these — the send
+  // 25), or a port<->TLS toggle mismatch, surface as one of these — a send
   // then walks the next candidate in the chain instead of giving up.
   const TLSISH = /timeout|greeting|tls|ssl|handshake|socket hang|protocol|connect e|eproto|wrong version|reset by peer|econnreset/i;
   let lastError = null;
   let used = null;
-  for (const cand of conf.candidates) {
+  let via = null;
+
+  const trySmtp = async () => {
+    if (!smtp) return false;
+    const from = `"${smtp.name}" <${smtp.addr}>`;
+    for (const cand of smtp.candidates) {
+      try {
+        await cand.transport.sendMail({ from, to, subject, html });
+        used = cand;
+        via = cand.describe;
+        return true;
+      } catch (error) {
+        lastError = error;
+        console.error(`[email:error] ${cand.describe}`, error.message.split('\n')[0]);
+        if (!TLSISH.test(error.message)) return false; // auth/reject errors won't fix by switching ports
+      }
+    }
+    return false;
+  };
+
+  const tryBrevo = async () => {
+    if (!brevo) return false;
     try {
-      await cand.transport.sendMail({ from, to, subject, html });
-      used = cand;
-      break;
+      const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': brevo.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          sender: { email: brevo.addr, name: brevo.name },
+          to: [{ email: to }],
+          subject,
+          htmlContent: html,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        lastError = new Error(`Brevo API ${res.status}: ${(txt || res.statusText).slice(0, 200)}`);
+        console.error('[email:error] Brevo HTTPS API', lastError.message.split('\n')[0]);
+        return false;
+      }
+      via = 'Brevo HTTPS API';
+      return true;
     } catch (error) {
       lastError = error;
-      console.error(`[email:error] ${cand.describe}`, error.message.split('\n')[0]);
-      if (!TLSISH.test(error.message)) break; // auth/reject errors won't fix by switching ports
+      console.error('[email:error] Brevo HTTPS API', error.message.split('\n')[0]);
+      return false;
     }
+  };
+
+  let ok;
+  if (conf.provider === 'brevo') {
+    ok = (await tryBrevo()) || (await trySmtp());
+  } else {
+    ok = (await trySmtp()) || (await tryBrevo());
   }
-  if (!used) {
-    return debug ? { ok: false, error: lastError?.message || 'SMTP send failed' } : false;
+  if (!ok) {
+    return debug ? { ok: false, error: lastError?.message || 'Email send failed' } : false;
   }
 
   // A candidate other than the saved config worked → persist the working
   // port/TLS mode so the next send goes straight to it (self-healing).
-  const primary = conf.candidates[0];
   let corrected = false;
-  if (conf.saved && (used.port !== primary.port || used.secure !== primary.secure)) {
+  if (smtp && used && smtp.saved && smtp.candidates[0] && (used.port !== smtp.candidates[0].port || used.secure !== smtp.candidates[0].secure)) {
     try {
-      await setConfig('email', { ...conf.saved, port: used.port, secure: used.secure });
+      await setConfig('email', { ...smtp.saved, port: used.port, secure: used.secure });
       corrected = true;
     } catch { /* non-fatal */ }
   }
-  console.log(`[email:sent] to=${to} subject="${subject}" via ${used.describe}${corrected ? ' (saved corrected port/TLS)' : ''}`);
-  return debug ? { ok: true, via: used.describe + (corrected ? ' (corrected in settings)' : '') } : true;
+  console.log(`[email:sent] to=${to} subject="${subject}" via ${via}${corrected ? ' (saved corrected port/TLS)' : ''}`);
+  return debug ? { ok: true, via: via + (corrected ? ' (corrected in settings)' : '') } : true;
 }
 
 // ── Account verification & 2FA (email codes) ────────────────────────────────
@@ -3633,6 +3695,7 @@ app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
       const v = val || {};
       return res.json({
         value: {
+          provider: String(v.provider || 'smtp').toLowerCase() === 'brevo' ? 'brevo' : 'smtp',
           host: v.host || '',
           port: Number(v.port || 587),
           secure: !!v.secure,
@@ -3641,6 +3704,8 @@ app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
           fromName: v.fromName || '',
           hasPassword: !!v.password,
           password: '',
+          hasApiKey: !!v.apiKey,
+          apiKey: '',
         },
       });
     }
@@ -3712,6 +3777,8 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
       // sender address as `email`, but config reads historically used `user` —
       // keep both in sync so either one always resolves to the SMTP login.
       const v = { ...existing, ...value };
+      const wantProvider = String(value.provider || '').toLowerCase();
+      v.provider = wantProvider === 'brevo' ? 'brevo' : wantProvider === 'smtp' ? 'smtp' : (String(existing.provider || 'smtp').toLowerCase() === 'brevo' ? 'brevo' : 'smtp');
       v.host = String(v.host || '').trim();
       v.fromName = String(v.fromName || '').trim();
       const { port, secure } = normalizeSmtpEndpoint(v.host, v.port, v.secure);
@@ -3722,6 +3789,9 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
       if (req.body.clearPassword === true) v.password = '';
       else if (String(value.password || '').trim()) v.password = encryptSecret(String(value.password).trim());
       else if (!v.password) v.password = existing.password || '';
+      if (req.body.clearApiKey === true) v.apiKey = '';
+      else if (String(value.apiKey || '').trim()) v.apiKey = encryptSecret(String(value.apiKey).trim());
+      else if (!v.apiKey) v.apiKey = existing.apiKey || '';
       value = v;
     }
     // OAuth apps used by talents when connecting their mailbox. Secrets are

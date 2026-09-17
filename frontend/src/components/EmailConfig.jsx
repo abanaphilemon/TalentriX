@@ -58,7 +58,8 @@ function SecretField({ value, onChange, placeholder, saved, onClear }) {
 export default function EmailConfig({ token }) {
   const [loading, setLoading] = useState(true);
 
-  // Platform SMTP
+  // Platform email
+  const [provider, setProvider] = useState('smtp');
   const [host, setHost] = useState('');
   const [port, setPort] = useState(587);
   const [secure, setSecure] = useState(false);
@@ -67,6 +68,9 @@ export default function EmailConfig({ token }) {
   const [password, setPassword] = useState('');
   const [hasPassword, setHasPassword] = useState(false);
   const [pwTouched, setPwTouched] = useState(false);
+  const [apiKey, setApiKey] = useState('');
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [apiKeyTouched, setApiKeyTouched] = useState(false);
 
   // OAuth apps (used by talents connecting their mailbox)
   const [oauth, setOauth] = useState({
@@ -97,6 +101,10 @@ export default function EmailConfig({ token }) {
         setHasPassword(!!v.hasPassword);
         setPassword('');
         setPwTouched(false);
+        setProvider(v.provider === 'brevo' ? 'brevo' : 'smtp');
+        setHasApiKey(!!v.hasApiKey);
+        setApiKey('');
+        setApiKeyTouched(false);
       }
       if (oauthRes.ok) {
         const d = await oauthRes.json();
@@ -130,16 +138,20 @@ export default function EmailConfig({ token }) {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          value: { host, port, secure, email, fromName, password },
+          value: { provider, host, port, secure, email, fromName, password, apiKey },
           clearPassword: pwTouched && !password,
+          clearApiKey: apiKeyTouched && !apiKey,
         }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || 'Could not save email settings.');
       setHasPassword(!(pwTouched && !password));
+      setHasApiKey(!(apiKeyTouched && !apiKey));
       setPassword('');
       setPwTouched(false);
-      setMsg({ type: 'ok', text: 'Email (SMTP) settings saved.' });
+      setApiKey('');
+      setApiKeyTouched(false);
+      setMsg({ type: 'ok', text: `Email settings saved (${provider === 'brevo' ? 'Brevo HTTPS API' : 'SMTP'}).` });
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
       setMsg({ type: 'err', text: e.message });
@@ -213,69 +225,121 @@ export default function EmailConfig({ token }) {
 
   return (
     <div className="space-y-10">
-      {/* ── Platform SMTP ── */}
+      {/* ── Platform email ── */}
       <div>
         <div className="flex items-center gap-2 mb-4">
           <Mail className="w-4 h-4 text-primary" />
-          <h3 className="font-display font-bold text-secondary">Platform Email (SMTP)</h3>
+          <h3 className="font-display font-bold text-secondary">Platform Email</h3>
         </div>
         <p className="text-xs text-secondary/50 mb-4">
           The sender used for account verification codes, login codes, interview reminders and notifications.
-          Leave the password blank to keep the one already saved. Env-var SMTP is still used as a fallback until
-          you save details here.
+          {' '}Leave a secret blank to keep the one already saved.
         </p>
 
-        <div className="grid sm:grid-cols-2 gap-4">
-          <div>
-            <label className={labelCls}>SMTP host</label>
-            <input className={inputCls} value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" />
-          </div>
-          <div className="flex gap-3">
-            <div className="w-28">
-              <label className={labelCls}>Port</label>
-              <input
-                type="number"
-                className={inputCls}
-                value={port}
-                onChange={(e) => setPort(Number(e.target.value || 587))}
-                placeholder="587"
-              />
+        <div className="flex flex-wrap gap-2 mb-4">
+          {[
+            { id: 'smtp', label: 'SMTP server', hint: 'Gmail / Outlook / any host' },
+            { id: 'brevo', label: 'Brevo HTTPS API', hint: 'Works from Render free tier' },
+          ].map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setProvider(m.id)}
+              className={`px-4 py-2 rounded-xl border text-sm font-bold transition-colors ${
+                provider === m.id ? 'bg-primary text-secondary border-primary' : 'border-secondary/10 text-secondary/60 hover:border-secondary/30'
+              }`}
+            >
+              {m.label}
+              <span className="block text-[10px] font-normal opacity-70">{m.hint}</span>
+            </button>
+          ))}
+        </div>
+
+        {provider === 'smtp' && (
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>SMTP host</label>
+              <input className={inputCls} value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" />
             </div>
-            <div className="flex-1 flex items-end pb-2">
-              <label className="flex items-center gap-2 text-sm font-semibold text-secondary/70 cursor-pointer">
-                <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)} className="w-4 h-4 accent-primary" />
-                SSL / TLS (port 465)
+            <div className="flex gap-3">
+              <div className="w-28">
+                <label className={labelCls}>Port</label>
+                <input
+                  type="number"
+                  className={inputCls}
+                  value={port}
+                  onChange={(e) => setPort(Number(e.target.value || 587))}
+                  placeholder="587"
+                />
+              </div>
+              <div className="flex-1 flex items-end pb-2">
+                <label className="flex items-center gap-2 text-sm font-semibold text-secondary/70 cursor-pointer">
+                  <input type="checkbox" checked={secure} onChange={(e) => setSecure(e.target.checked)} className="w-4 h-4 accent-primary" />
+                  SSL / TLS (port 465)
+                </label>
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelCls}>
+                SMTP password / app password {hasPassword && !pwTouched && <span className="normal-case font-medium text-secondary/40">— saved</span>}
               </label>
+              <SecretField
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setPwTouched(true);
+                }}
+                placeholder="Enter the mailbox password"
+                saved={hasPassword}
+                onClear={() => {
+                  setPassword('');
+                  setPwTouched(true);
+                }}
+              />
+              {hasPassword && !pwTouched && (
+                <p className="text-[11px] text-secondary/40 mt-1">A password is saved — leave the field blank to keep it, or type a new one.</p>
+              )}
             </div>
           </div>
+        )}
+
+        {provider === 'brevo' && (
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2">
+              <label className={labelCls}>
+                Brevo API key (starts with xkeysib-) {hasApiKey && !apiKeyTouched && <span className="normal-case font-medium text-secondary/40">— saved</span>}
+              </label>
+              <SecretField
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setApiKeyTouched(true);
+                }}
+                placeholder="xkeysib-…"
+                saved={hasApiKey}
+                onClear={() => {
+                  setApiKey('');
+                  setApiKeyTouched(true);
+                }}
+              />
+              {hasApiKey && !apiKeyTouched && (
+                <p className="text-[11px] text-secondary/40 mt-1">An API key is saved — leave the field blank to keep it, or type a new one.</p>
+              )}
+              <p className="text-[11px] text-secondary/40 mt-1">
+                Get it from Brevo → Dashboard → SMTP &amp; API → API Keys. Sends over HTTPS (port 443), so it works even where SMTP ports are blocked.
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 grid sm:grid-cols-2 gap-4">
           <div>
-            <label className={labelCls}>Sender email (SMTP user)</label>
+            <label className={labelCls}>Sender email</label>
             <input type="email" className={inputCls} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="no-reply@yourdomain.com" />
           </div>
           <div>
             <label className={labelCls}>Sender display name</label>
             <input className={inputCls} value={fromName} onChange={(e) => setFromName(e.target.value)} placeholder="TalentriX" />
-          </div>
-          <div className="sm:col-span-2">
-            <label className={labelCls}>
-              SMTP password / app password {hasPassword && !pwTouched && <span className="normal-case font-medium text-secondary/40">— saved</span>}
-            </label>
-            <SecretField
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setPwTouched(true);
-              }}
-              placeholder="Enter the mailbox password"
-              saved={hasPassword}
-              onClear={() => {
-                setPassword('');
-                setPwTouched(true);
-              }}
-            />
-            {hasPassword && !pwTouched && (
-              <p className="text-[11px] text-secondary/40 mt-1">A password is saved — leave the field blank to keep it, or type a new one.</p>
-            )}
           </div>
         </div>
 
@@ -286,7 +350,7 @@ export default function EmailConfig({ token }) {
             className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 disabled:opacity-60 transition-colors"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save SMTP settings
+            Save email settings
           </button>
           <span className="text-xs text-secondary/40">Then send a test to confirm it works.</span>
         </div>
@@ -395,8 +459,9 @@ export default function EmailConfig({ token }) {
       <div className="flex items-start gap-2 p-4 rounded-2xl bg-secondary/5 border border-secondary/10">
         <ShieldCheck className="w-4 h-4 text-primary shrink-0 mt-0.5" />
         <p className="text-xs text-secondary/50">
-          With SMTP configured, every account gets an emailed 6-digit code at sign-up (email verification) and at each
-          login (two-factor authentication). Secrets are AES-256 encrypted at rest and masked in this panel.
+          With email configured, every account gets an emailed 6-digit code at sign-up (email verification) and at each
+          login (two-factor authentication). SMTP is tried first (unless Brevo is selected); if the SMTP attempt fails,
+          delivery falls back to the Brevo HTTPS API. Secrets are AES-256 encrypted at rest and masked in this panel.
         </p>
       </div>
     </div>
