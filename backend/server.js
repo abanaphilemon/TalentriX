@@ -1854,7 +1854,15 @@ const EmailConnection = mongoose.model('EmailConnection', new mongoose.Schema({
   secure: { type: Boolean, default: true },
   user: { type: String, default: '' },
   secret: { type: String, default: '' },
-  verifiedAt: { type: Date, default: Date.now },
+  // OAuth2 connection (Google / Microsoft) — handed to nodemailer as an
+  // XOAUTH2 token. Only refreshToken + accessToken are used at send time;
+  // clientId/clientSecret come from the admin's SiteConfig('oauth') entry and
+  // are copied here so a rotated admin key never breaks stored connections.
+  oauth: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+  verifiedAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now },
 }));
 
@@ -1876,6 +1884,42 @@ const Application = mongoose.model('Application', new mongoose.Schema({
   status: { type: String, enum: ['draft', 'sent', 'failed'], default: 'draft' },
   error: { type: String, default: '' },
   sentAt: { type: Date },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// AI-generated learning roadmaps for job roles. Built from a hub requesting a
+// module by typing a role, and automatically from live employer demand (when a
+// new talent request names skills relevant to a role). Hubs use these to keep
+// their training curriculums aligned with what employers are actually hiring for.
+const LearningModule = mongoose.model('LearningModule', new mongoose.Schema({
+  roleKey: { type: String, index: true },   // normalized slug used for lookups
+  role: { type: String, required: true },    // readable role title
+  skills: { type: [String], default: [] },
+  tools: { type: [String], default: [] },
+  courses: [{
+    title: { type: String, default: '' },
+    provider: { type: String, default: '' },
+    url: { type: String, default: '' },
+    duration: { type: String, default: '' },
+    description: { type: String, default: '' },
+  }],
+  resources: { type: [String], default: [] },
+  marketNote: { type: String, default: '' }, // what employers currently want for this role
+  demandNote: { type: String, default: '' }, // why an auto-generated module exists (the live demand)
+  source: { type: String, enum: ['manual', 'demand'], default: 'manual' },
+  approved: { type: Boolean, default: true }, // admin can un-approve/hide a module
+  hidden: { type: Boolean, default: false },
+  updatedAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// Audit trail of every module request a hub made (role + whether it was
+// generated or just looked up), shown to the admin.
+const ModuleRequest = mongoose.model('ModuleRequest', new mongoose.Schema({
+  hubId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  role: { type: String, required: true },
+  generatedModuleId: { type: mongoose.Schema.Types.ObjectId, ref: 'LearningModule', default: null },
+  status: { type: String, enum: ['generated', 'searched'], default: 'generated' },
   createdAt: { type: Date, default: Date.now },
 }));
 
@@ -3152,6 +3196,10 @@ app.post('/api/talent-requests', authenticateToken, async (req, res) => {
       status: 'open',
       results: [],
     });
+    // On a brand-new request only: validate the demanded skills against the
+    // market, notify affected talents + their hubs, and (re)publish a learning
+    // module for the role. Fire-and-forget so the response stays fast.
+    runSkillDemandAnalysis(tr).catch(() => {});
     res.status(201).json({ request: tr });
   } catch (error) {
     console.error('Talent request create error:', error);
@@ -4193,20 +4241,324 @@ function discoverApplyEmail(job) {
   return found || '';
 }
 
+// ── Employer-demand skill analysis + learning modules ────────────────────────
+// When an employer creates a talent request, the AI validates the required
+// skills/tools for that role against what the market actually needs, then we
+// notify affected talents (update their profile / learn) and their hubs
+// (add these skills to your training modules). Hubs can also generate a full
+// learning module by typing a role.
+
+function parseAiJson(text, fallback) {
+  try {
+    return JSON.parse(String(text).replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim());
+  } catch {
+    return fallback || {};
+  }
+}
+
+function normSkills(items) {
+  return [...new Set((items || []).map(normalizeTag).filter((x) => x.length >= 2))];
+}
+
+// Confirm whether each demanded skill/tool is genuinely required for a role by
+// asking the AI. Returns { valid, irrelevant, marketNote }.
+async function analyzeSkillDemand(tr) {
+  const cfg = await getConfig('ai');
+  if (!cfg?.apiKey || !cfg?.model) return null;
+  const skills = (tr.skills || []).filter(Boolean);
+  const tools = (tr.tools || []).filter(Boolean);
+  if (!skills.length && !tools.length) return null;
+  const system = 'You analyse employer hiring demand against the current job market. For a given role, you confirm which skills and tools are genuinely required today and flag anything that is not a real requirement for that role. Be practical and specific.';
+  const prompt = [
+    `ROLE: ${tr.role || ''}`,
+    `REQUIRED SKILLS: ${skills.join(', ') || '(none)'}`,
+    `REQUIRED TOOLS: ${tools.join(', ') || '(none)'}`,
+    `EMPLOYER DESCRIPTION: ${(tr.description || '').slice(0, 800)}`,
+    '',
+    'Return JSON only with these fields:',
+    '  "valid": [skills/tools that are genuinely required for this role today]',
+    '  "irrelevant": [skills/tools that are NOT genuinely needed for this role]',
+    '  "marketNote": "one short sentence on what employers currently expect for this role (call out in-demand skills/tools the employer did not list)"',
+  ].join('\n');
+  const reply = await aiChat(cfg, { system, user: prompt, max: 600 });
+  const parsed = parseAiJson(reply, {});
+  const valid = [...new Set((parsed.valid || []).filter(Boolean).map((x) => String(x).trim()))];
+  const irrelevant = [...new Set((parsed.irrelevant || []).filter(Boolean).map((x) => String(x).trim()))];
+  return {
+    valid: valid.length ? valid : skills.concat(tools), // never drop the employer's list entirely
+    irrelevant,
+    marketNote: String(parsed.marketNote || '').slice(0, 400),
+  };
+}
+
+// Approved+interviewed seekers whose headline/summary fit the requested role
+// but who are missing at least one of the demanded skills/tools.
+async function findAffectedTalents(tr, demanded) {
+  const roleWords = normalizeTag(tr.role || '').split(' ').filter((w) => w.length > 2);
+  if (!roleWords.length) return [];
+  const wanted = normSkills(demanded);
+  const seekers = await User.find({ role: 'seeker', status: 'approved', active: true, interviewDone: true })
+    .select('-password -e2ePriv');
+  const affected = [];
+  for (const s of seekers) {
+    const titleTag = normalizeTag(s.title || '');
+    const summaryTag = normalizeTag(s.summary || '');
+    if (!roleWords.some((w) => titleTag.includes(w) || summaryTag.includes(w))) continue;
+    const profileSkills = (s.skills || []).map(normalizeTag);
+    const missingItems = wanted.filter(
+      (item) => !profileSkills.some((p) => p.includes(item) || item.includes(p)) && !titleTag.includes(item) && !summaryTag.includes(item),
+    );
+    if (!missingItems.length) continue;
+    affected.push({ user: s, missingItems });
+    if (affected.length >= 200) break;
+  }
+  return affected;
+}
+
+function shortList(items, max = 4) {
+  return items.slice(0, max).join(', ') + (items.length > max ? '…' : '');
+}
+
+// One-shot: validate the request's demanded skills, notify every affected
+// talent + their hub, upsert a demand-driven learning module, and (if the AI
+// flagged anything) warn the admin. Fire-and-forget from request creation.
+async function runSkillDemandAnalysis(tr) {
+  try {
+    const analysis = await analyzeSkillDemand(tr);
+    if (!analysis) return null;
+    const demanded = analysis.valid;
+    const affected = await findAffectedTalents(tr, demanded);
+    const role = tr.role || '';
+
+    // 1) Notify affected talents (dedup by user, once per request).
+    const talentNotifs = affected.map((a) => ({
+      userId: a.user._id,
+      type: 'skill_gap',
+      title: `Employers need ${shortList(a.missingItems)} for ${role} roles`,
+      body: `A new employer request for ${role} requires skills not on your profile yet: ${a.missingItems.join(', ')}. Update your profile or learn these skills so you appear in new matches.${analysis.marketNote ? ' ' + analysis.marketNote : ''}`,
+      payload: { requestId: tr._id, role, missingItems: a.missingItems, marketNote: analysis.marketNote },
+    }));
+    if (talentNotifs.length) await Notification.insertMany(talentNotifs);
+
+    // 2) Notify each unique hub attached to those talents.
+    const hubIds = [...new Set(affected.map((a) => String(a.user.hubId)).filter(Boolean))];
+    const hubNotifs = [];
+    for (const hubId of hubIds) {
+      hubNotifs.push({
+        userId: hubId,
+        type: 'skill_gap_hub',
+        title: `Update your training: employers need ${shortList(demanded)}`,
+        body: `New employer demand for ${role} roles includes: ${demanded.join(', ')}. Add these to your learning modules so your talent pool stays competitive.${analysis.marketNote ? ' ' + analysis.marketNote : ''}`,
+        payload: { requestId: tr._id, role, skills: demanded, marketNote: analysis.marketNote },
+      });
+    }
+    if (hubNotifs.length) await Notification.insertMany(hubNotifs);
+
+    // 3) Auto-publish/refresh a learning module for this role from the demand.
+    let moduleId = null;
+    const module = await upsertLearningModuleForDemand(tr.role || '', demanded, analysis.marketNote);
+    if (module) {
+      moduleId = module._id;
+      for (const hubId of hubIds) {
+        await Notification.create({
+          userId: hubId,
+          type: 'learning_module',
+          title: `New learning module published: ${role}`,
+          body: `A learning module for ${role} is ready — based on a live employer request. Open the Learning Modules tab to view courses and resources.`,
+          payload: { requestId: tr._id, moduleId: module._id, role },
+        });
+      }
+    }
+
+    // 4) Admin: flag anything the AI couldn't validate as a real requirement.
+    if (analysis.irrelevant.length) {
+      const admin = await User.findOne({ role: 'admin' });
+      if (admin) {
+        await Notification.create({
+          userId: admin._id,
+          type: 'demand_anomaly',
+          title: `Suspicious skills flagged in a ${role} request`,
+          body: `An employer request for ${role} listed: ${analysis.irrelevant.join(', ')} — the AI does not recognise these as real requirements for that role.`,
+          payload: { requestId: tr._id, irrelevant: analysis.irrelevant, role },
+        });
+      }
+    }
+
+    const summary = {
+      valid: demanded,
+      irrelevant: analysis.irrelevant,
+      marketNote: analysis.marketNote,
+      talentsNotified: talentNotifs.length,
+      hubsNotified: hubNotifs.length,
+      moduleGenerated: !!moduleId,
+      sentAt: new Date(),
+    };
+
+    // Persist on the request (schema is Mixed-heavy; assign directly).
+    tr.analysis = summary;
+    try { await tr.save(); } catch { /* non-fatal */ }
+    return summary;
+  } catch (e) {
+    console.error('Skill demand analysis error:', e.message);
+    return null;
+  }
+}
+
+// Generate a full learning module (skills/tools/courses/resources) for a role
+// using the configured AI. Throws if AI is not configured.
+async function generateLearningModule(role, opts = {}) {
+  const cfg = await getConfig('ai');
+  if (!cfg?.apiKey) throw new Error('AI is not configured yet — ask the admin to add an API key.');
+  if (!cfg?.model) throw new Error('No AI model selected yet — ask the admin to pick a model.');
+  const system = 'You create practical, up-to-date learning roadmaps for job roles. Recommend real, reputable learning resources (YouTube, Coursera, Udemy, freeCodeCamp, official docs, MDN, etc.) and the exact skills and tools the role requires today. Never invent URLs — only recommend well-known courses with stable, real links or official documentation.';
+  const prompt = [
+    `ROLE: ${role}`,
+    opts.skills && opts.skills.length ? `SKILLS TO COVER: ${opts.skills.join(', ')}` : '',
+    opts.tools && opts.tools.length ? `TOOLS TO COVER: ${opts.tools.join(', ')}` : '',
+    opts.context ? `CONTEXT: ${opts.context}` : '',
+    '',
+    'Return JSON only with fields:',
+    '  "skills": [ordered list of skills a learner should master]',
+    '  "tools": [tools the role uses day-to-day]',
+    '  "courses": [exactly 3-5 objects with "title", "provider", "url", "duration" ("6 hours" etc.), "description" (one line)]',
+    '  "resources": [free practice sites / official docs, as plain strings]',
+    '  "marketNote": "one sentence on current industry demand"',
+    '',
+    'If you cannot give a real, stable URL for a course, omit that course and pick one you know exists.',
+  ].filter(Boolean).join('\n');
+  const reply = await aiChat(cfg, { system, user: prompt, max: 1400 });
+  const parsed = parseAiJson(reply, {});
+  return {
+    role: String(role).slice(0, 200),
+    skills: [...new Set([...(parsed.skills || []).filter(Boolean), ...(opts.skills || [])].map((x) => String(x).trim()).filter(Boolean))],
+    tools: [...new Set([...(parsed.tools || []).filter(Boolean), ...(opts.tools || [])].map((x) => String(x).trim()).filter(Boolean))],
+    courses: (parsed.courses || []).slice(0, 5).map((c) => ({
+      title: String(c.title || '').slice(0, 200),
+      provider: String(c.provider || '').slice(0, 80),
+      url: String(c.url || '').slice(0, 500),
+      duration: String(c.duration || '').slice(0, 60),
+      description: String(c.description || '').slice(0, 300),
+    })),
+    resources: (parsed.resources || []).slice(0, 6).map((r) => String(r || '').slice(0, 300)),
+    marketNote: String(parsed.marketNote || '').slice(0, 400),
+  };
+}
+
+// Upsert a demand-driven learning module for a role (called from the skill
+// analysis). Existing modules are refreshed, not duplicated.
+async function upsertLearningModuleForDemand(role, validItems, marketNote) {
+  try {
+    if (!role || !validItems.length) return null;
+    const roleKey = normalizeTag(role);
+    const skills = validItems.filter((x) => !/^(tool:)/i.test(x));
+    const tools = validItems.filter((x) => /^(tool:)/i.test(x)).map((x) => x.replace(/^tool:\s*/i, ''));
+    const context = `A live employer request for ${role} requires: ${validItems.join(', ')}.`;
+    const generated = await generateLearningModule(role, { skills, tools, context });
+    const existing = await LearningModule.findOne({ roleKey });
+    if (existing) {
+      Object.assign(existing, generated, {
+        skills: [...new Set([...(existing.skills || []), ...generated.skills])],
+        tools: [...new Set([...(existing.tools || []), ...generated.tools])],
+        courses: generated.courses.length ? generated.courses : existing.courses,
+        demandNote: context,
+        marketNote: marketNote || generated.marketNote || existing.marketNote,
+        source: 'demand',
+        updatedAt: new Date(),
+      });
+      await existing.save();
+      return existing;
+    }
+    const created = await LearningModule.create({
+      ...generated,
+      roleKey,
+      demandNote: context,
+      marketNote: marketNote || generated.marketNote || '',
+      source: 'demand',
+      updatedAt: new Date(),
+    });
+    return created;
+  } catch (e) {
+    console.error('Upsert learning module error:', e.message);
+    return null;
+  }
+}
+
+function publicLearningModule(m) {
+  return {
+    id: m._id,
+    roleKey: m.roleKey,
+    role: m.role,
+    skills: m.skills || [],
+    tools: m.tools || [],
+    courses: m.courses || [],
+    resources: m.resources || [],
+    marketNote: m.marketNote || '',
+    demandNote: m.demandNote || '',
+    source: m.source || 'manual',
+    hidden: !!m.hidden,
+    approved: !!m.approved,
+    updatedAt: m.updatedAt,
+    createdAt: m.createdAt,
+  };
+}
+
 // Mailbox presets so connecting Gmail/Outlook requires only an app password.
+// When the caller explicitly picked "Custom SMTP" we never force a provider
+// host, even if the address looks like gmail/outlook.
 function emailPresetFor(address, provider) {
   const domain = String(address || '').split('@')[1]?.toLowerCase() || '';
-  if (provider === 'gmail' || domain.includes('gmail') || domain.includes('googlemail')) {
+  const p = String(provider || '');
+  if (p === 'gmail' || (p !== 'smtp' && (domain.includes('gmail') || domain.includes('googlemail')))) {
     return { provider: 'gmail', host: 'smtp.gmail.com', port: 465, secure: true };
   }
-  if (provider === 'outlook' || /(outlook|hotmail|live|msn|office365|microsoft)/.test(domain)) {
+  if (p === 'outlook' || (p !== 'smtp' && /(outlook|hotmail|live|msn|office365|microsoft)/.test(domain))) {
     return { provider: 'outlook', host: 'smtp.office365.com', port: 587, secure: false };
   }
   return { provider: 'smtp', host: '', port: 587, secure: false };
 }
 
+// Short, human-friendly explanations for the common SMTP failures so the
+// talent knows exactly what to fix instead of seeing a raw server error.
+function smtpErrorText(e) {
+  const m = String((e && e.message) || e || '');
+  if (/5\.7\.(30|139)|smtpclientauthentication|basic auth|basic authentication/i.test(m)) {
+    return 'This mail provider has retired basic SMTP login for this account. Use a Gmail account, or connect with OAuth (Google/Microsoft) for a setup that always works.';
+  }
+  if (/EAUTH|535|username and password|incorrect/i.test(m)) {
+    return 'The app password was rejected. Turn on 2-Step Verification, create an app password under Account → Security, and enter it without spaces.';
+  }
+  if (/ETIMEDOUT|ECONNREFUSED|ESOCKET|ENOTFOUND|greeting/i.test(m)) {
+    return 'Could not reach the mail server (connection timed out). Your network may block SMTP ports 465/587, or the server is temporarily down. You can still save the mailbox and try sending.';
+  }
+  return String(m).slice(0, 300);
+}
+
 function buildUserTransporter(conn) {
+  const common = {
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
+  };
+  const oauth = conn.oauth;
+  if (oauth && (oauth.refreshToken || oauth.accessToken)) {
+    return nodemailer.createTransport({
+      ...common,
+      host: conn.host,
+      port: Number(conn.port || 465),
+      secure: !!conn.secure,
+      auth: {
+        type: 'OAuth2',
+        user: conn.user || conn.email,
+        clientId: oauth.clientId || '',
+        clientSecret: oauth.clientSecret || '',
+        refreshToken: oauth.refreshToken || '',
+        accessToken: oauth.accessToken || '',
+        expires: oauth.accessTokenExpires ? +oauth.accessTokenExpires : undefined,
+      },
+    });
+  }
   return nodemailer.createTransport({
+    ...common,
     host: conn.host,
     port: Number(conn.port || 465),
     secure: !!conn.secure,
@@ -4299,10 +4651,23 @@ function publicApplication(a) {
 app.get('/api/email/status', authenticateToken, async (req, res) => {
   try {
     const doc = await EmailConnection.findOne({ userId: req.user.userId });
+    const usable = !!doc && (!!doc.verifiedAt || !!(doc.oauth && (doc.oauth.refreshToken || doc.oauth.accessToken)));
     res.json({
       connected: !!doc,
+      verified: usable,
+      needsReAuth: !!doc && !usable,
       connection: doc
-        ? { provider: doc.provider, email: doc.email, displayName: doc.displayName, host: doc.host, port: doc.port, secure: !!doc.secure, verifiedAt: doc.verifiedAt }
+        ? {
+            provider: doc.provider,
+            email: doc.email,
+            displayName: doc.displayName,
+            host: doc.host,
+            port: doc.port,
+            secure: !!doc.secure,
+            verified: usable,
+            oauth: !!doc.oauth,
+            verifiedAt: doc.verifiedAt || null,
+          }
         : null,
     });
   } catch (error) {
@@ -4313,47 +4678,93 @@ app.get('/api/email/status', authenticateToken, async (req, res) => {
 
 app.post('/api/email/connect', authenticateToken, async (req, res) => {
   try {
-    const { provider, email, displayName, host, port, secure, user, password } = req.body || {};
+    const { provider, email, displayName, host, port, secure, user, password, skipVerify, oauth } = req.body || {};
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
       return res.status(400).json({ message: 'Please provide a valid email address.' });
     }
-    if (!password) {
+    const isOAuth = !!(oauth && (oauth.refreshToken || oauth.accessToken));
+    if (!isOAuth && !password) {
       return res.status(400).json({ message: 'Please provide the app password for this mailbox.' });
     }
+
     const preset = emailPresetFor(email, provider);
+    const parsedPort = Number(port || preset.port || 587);
     const con = {
       userId: req.user.userId,
       provider: preset.provider,
       email: String(email).trim().toLowerCase(),
       displayName: String(displayName || '').trim(),
       host: String(host || preset.host || '').trim(),
-      port: Number(port || preset.port || 465),
+      port: Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : 587,
       secure: secure !== undefined ? !!secure : !!preset.secure,
       user: String(user || email || '').trim(),
     };
+
+    if (isOAuth) {
+      con.provider = oauth.kind === 'microsoft' ? 'outlook' : 'gmail';
+      if (!con.host) {
+        if (con.provider === 'gmail') { con.host = 'smtp.gmail.com'; con.port = 465; con.secure = true; }
+        else { con.host = 'smtp.office365.com'; con.port = 587; con.secure = false; }
+      }
+    }
+
     if (!con.host) return res.status(400).json({ message: 'We could not detect this mailbox\'s server. Use the Custom provider and fill in your SMTP settings.' });
 
-    // Verify the connection before storing anything.
-    const test = nodemailer.createTransport({
-      host: con.host,
-      port: con.port,
-      secure: con.secure,
-      auth: { user: con.user, pass: String(password) },
-    });
-    try {
-      await test.verify();
-    } catch (e) {
-      return res.status(400).json({
-        message: 'Could not connect to the email server. Double-check the app password and try again.',
-        detail: e.message,
+    // Verify before saving, unless the talent chose "Save without testing"
+    // (their network may block SMTP) or this is an OAuth connection.
+    if (!isOAuth && !skipVerify) {
+      const test = nodemailer.createTransport({
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 30000,
+        host: con.host,
+        port: con.port,
+        secure: con.secure,
+        auth: { user: con.user, pass: String(password) },
       });
+      try {
+        await test.verify();
+      } catch (e) {
+        return res.status(400).json({
+          message: smtpErrorText(e),
+          detail: String(e.message || '').slice(0, 300),
+          canSkip: true,
+        });
+      }
     }
 
     const existing = await EmailConnection.findOne({ userId: req.user.userId });
     const doc = existing || new EmailConnection({ userId: req.user.userId });
-    Object.assign(doc, con, { secret: encryptSecret(String(password)), verifiedAt: new Date() });
+    const saved = { ...con };
+    if (isOAuth) {
+      saved.oauth = {
+        kind: oauth.kind || (con.provider === 'outlook' ? 'microsoft' : 'google'),
+        refreshToken: String(oauth.refreshToken || ''),
+        accessToken: String(oauth.accessToken || ''),
+        accessTokenExpires: oauth.accessTokenExpires ? new Date(oauth.accessTokenExpires) : undefined,
+        clientId: String(oauth.clientId || ''),
+        clientSecret: oauth.clientSecret ? encryptSecret(String(oauth.clientSecret)) : '',
+      };
+      saved.secret = '';
+      saved.verifiedAt = null;
+    } else {
+      saved.secret = encryptSecret(String(password));
+      saved.verifiedAt = skipVerify ? null : new Date();
+      saved.oauth = null;
+    }
+    Object.assign(doc, saved);
     await doc.save();
-    res.json({ ok: true, email: doc.email, provider: doc.provider, host: doc.host, port: doc.port, secure: !!doc.secure, displayName: doc.displayName });
+    res.json({
+      ok: true,
+      email: doc.email,
+      provider: doc.provider,
+      host: doc.host,
+      port: doc.port,
+      secure: !!doc.secure,
+      displayName: doc.displayName,
+      verified: !!doc.verifiedAt || isOAuth,
+      oauth: isOAuth,
+    });
   } catch (error) {
     console.error('Email connect error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -4367,6 +4778,121 @@ app.delete('/api/email/connect', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Email disconnect error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── AI Auto-Apply: OAuth 2.0 (Google / Microsoft) ────────────────────────────
+// Google Workspace and Microsoft 365 retired SMTP app passwords, so talents
+// can instead connect via a real OAuth flow. The admin stores the OAuth app
+// credentials in SiteConfig('oauth') → { google: {..}, microsoft: {..} }.
+
+async function oauthClientFor(kind) {
+  const cfg = (await getConfig('oauth')) || {};
+  return cfg[kind] || null;
+}
+
+function oauthState(jwt) {
+  return Buffer.from(JSON.stringify({ t: jwt })).toString('base64url');
+}
+function oauthStateDecode(raw) {
+  try {
+    return JSON.parse(Buffer.from(String(raw || ''), 'base64url').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+app.get('/api/oauth/:provider/auth', authenticateToken, async (req, res) => {
+  try {
+    const kind = req.params.provider === 'microsoft' ? 'microsoft' : 'google';
+    const client = await oauthClientFor(kind);
+    if (!client?.clientId || !client?.clientSecret) {
+      return res.status(400).json({
+        message: `OAuth is not configured yet — ask the admin to add ${kind === 'microsoft' ? 'Microsoft' : 'Google'} OAuth credentials in the admin panel.`,
+      });
+    }
+    const redirectUri = client.redirectUri || `${req.protocol}://${req.get('host')}/api/oauth/${kind}/callback`;
+    const state = oauthState(req.headers.authorization?.replace(/^Bearer\s+/i, '') || '');
+    let url;
+    if (kind === 'microsoft') {
+      url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=${encodeURIComponent(client.clientId)}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&response_mode=query&scope=${encodeURIComponent('offline_access openid email profile User.Read https://outlook.office.com/SMTP.Send')}&state=${encodeURIComponent(state)}`;
+    } else {
+      url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(client.clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('openid email profile https://www.googleapis.com/auth/gmail.send')}&access_type=offline&prompt=consent&state=${encodeURIComponent(state)}`;
+    }
+    res.json({ url, kind });
+  } catch (error) {
+    console.error('OAuth auth error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/oauth/:provider/callback', async (req, res) => {
+  try {
+    const kind = req.params.provider === 'microsoft' ? 'microsoft' : 'google';
+    const code = String(req.query.code || '');
+    const { t: jwt } = oauthStateDecode(req.query.state);
+    if (!code || !jwt) return res.status(400).send('Missing OAuth parameters.');
+    let payload = null;
+    try { payload = jwt.verify(jwt, process.env.JWT_SECRET); } catch { /* invalid token */ }
+    if (!payload?.userId) return res.status(400).send('Invalid session. Please log in again.');
+    const user = await User.findById(payload.userId);
+    if (!user) return res.status(400).send('User not found.');
+
+    const client = await oauthClientFor(kind);
+    if (!client?.clientId || !client?.clientSecret) return res.status(400).send('OAuth is not configured.');
+    const redirectUri = client.redirectUri || `${req.protocol}://${req.get('host')}/api/oauth/${kind}/callback`;
+
+    const tokenUrl = kind === 'microsoft'
+      ? 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+      : 'https://oauth2.googleapis.com/token';
+    const body = new URLSearchParams({
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      code,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+    });
+    const res2 = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(30000),
+    });
+    const data = await res2.json();
+    if (!res2.ok) {
+      console.error('OAuth token exchange error:', data);
+      return res.status(400).send('Could not finish OAuth. Try again.');
+    }
+
+    const email = String(data.email || user.email || '').trim();
+    const existing = await EmailConnection.findOne({ userId: user._id });
+    const doc = existing || new EmailConnection({ userId: user._id });
+    Object.assign(doc, {
+      provider: kind === 'microsoft' ? 'outlook' : 'gmail',
+      email,
+      displayName: String(data.name || user.name || '').trim(),
+      host: kind === 'microsoft' ? 'smtp.office365.com' : 'smtp.gmail.com',
+      port: kind === 'microsoft' ? 587 : 465,
+      secure: kind !== 'microsoft',
+      user: email || (kind === 'microsoft' ? 'smtp.office365.com' : ''), // nodemailer OAuth2 uses the account email for SMTPS.PA
+      secret: '',
+      oauth: {
+        kind,
+        refreshToken: String(data.refresh_token || '').slice(0, 500),
+        accessToken: String(data.access_token || '').slice(0, 4000),
+        accessTokenExpires: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
+        clientId: String(client.clientId || ''),
+        clientSecret: client.clientSecret ? encryptSecret(String(client.clientSecret)) : '',
+      },
+      verifiedAt: new Date(),
+    });
+    await doc.save();
+
+    const origin = process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`;
+    res.redirect(`${origin}/dashboard/seeker?mailbox=connected`);
+  } catch (error) {
+    console.error('OAuth callback error:', error);
+    res.status(500).send('OAuth failed. Please try again.');
   }
 });
 
@@ -4544,6 +5070,119 @@ app.get('/api/admin/applications', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Admin applications error:', error);
 res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── Learning Modules (hub + admin) ──────────────────────────────────────────
+
+// Hub: generate (or refresh) a learning module by typing a role.
+app.post('/api/learning/generate', authenticateToken, async (req, res) => {
+  try {
+    const role = String(req.body?.role || '').trim();
+    if (!role) return res.status(400).json({ message: 'Type a role to generate its module.' });
+    const generated = await generateLearningModule(role, {});
+    const roleKey = normalizeTag(role);
+    let saved = await LearningModule.findOne({ roleKey });
+    if (saved) {
+      Object.assign(saved, generated, { roleKey, source: 'manual', updatedAt: new Date() });
+      await saved.save();
+    } else {
+      saved = await LearningModule.create({ ...generated, roleKey, source: 'manual', updatedAt: new Date() });
+    }
+    await ModuleRequest.create({ hubId: req.user.userId, role, generatedModuleId: saved._id, status: 'generated' });
+    res.json({ module: publicLearningModule(saved) });
+  } catch (error) {
+    console.error('Learning generate error:', error);
+    res.status(400).json({ message: error.message || 'Could not generate the module. Is the platform AI configured?' });
+  }
+});
+
+// Hub + admin: list learning modules (optional ?role= lookup slug).
+app.get('/api/learning/modules', authenticateToken, async (req, res) => {
+  try {
+    const roleKey = req.query.role ? normalizeTag(String(req.query.role)) : '';
+    const filter = roleKey ? { roleKey, hidden: false } : { hidden: false };
+    const list = await LearningModule.find(filter).sort({ updatedAt: -1 }).limit(100);
+    res.json({ modules: list.map(publicLearningModule) });
+  } catch (error) {
+    console.error('Learning list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Hub: just the demand-driven modules (auto-built from live employer requests).
+app.get('/api/learning/demand', authenticateToken, async (req, res) => {
+  try {
+    const list = await LearningModule.find({ source: 'demand', hidden: false }).sort({ updatedAt: -1 }).limit(50);
+    res.json({ modules: list.map(publicLearningModule) });
+  } catch (error) {
+    console.error('Learning demand error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: every module plus the audit trail of hub module requests and the
+// demand analyses (irrelevant-skills flags) from talent requests.
+app.get('/api/admin/learning', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const [modules, requests, analyses] = await Promise.all([
+      LearningModule.find({}).sort({ updatedAt: -1 }).limit(200),
+      ModuleRequest.find({}).sort({ createdAt: -1 }).limit(100),
+      TalentRequest.find({ analysis: { $exists: true, $ne: null } }).sort({ createdAt: -1 }).limit(100),
+    ]);
+    const hubIds = [...new Set(requests.map((r) => String(r.hubId)))];
+    const hubs = await User.find({ _id: { $in: hubIds } }).select('name email company');
+    const hubBy = new Map(hubs.map((h) => [String(h._id), h]));
+    res.json({
+      modules: modules.map(publicLearningModule),
+      requests: requests.map((r) => {
+        const h = hubBy.get(String(r.hubId));
+        return { id: r._id, role: r.role, status: r.status, createdAt: r.createdAt, hub: h ? { id: h._id, name: h.name, email: h.email } : null };
+      }),
+      analyses: analyses.map((tr) => ({
+        id: tr._id,
+        role: tr.role,
+        analysis: tr.analysis || null,
+        createdAt: tr.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error('Admin learning error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: edit / approve / hide / unhide a module.
+app.patch('/api/admin/learning/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const mod = await LearningModule.findById(req.params.id);
+    if (!mod) return res.status(404).json({ message: 'Module not found' });
+    const patch = req.body || {};
+    if (typeof patch.hidden === 'boolean') mod.hidden = patch.hidden;
+    if (typeof patch.approved === 'boolean') mod.approved = patch.approved;
+    ['role', 'skills', 'tools', 'marketNote', 'demandNote'].forEach((k) => {
+      if (patch[k] !== undefined) mod[k] = patch[k];
+    });
+    mod.updatedAt = new Date();
+    await mod.save();
+    res.json({ module: publicLearningModule(mod) });
+  } catch (error) {
+    console.error('Admin learning patch error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin: delete a module.
+app.delete('/api/admin/learning/:id', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    await LearningModule.deleteOne({ _id: req.params.id });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Admin learning delete error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

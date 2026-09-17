@@ -22,6 +22,11 @@ import {
   Tag,
   Search,
   Headset,
+  GraduationCap,
+  BookOpen,
+  Wand2,
+  Globe,
+  Clock,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -145,11 +150,79 @@ function EndorsePanel({ seeker, token, hubName, onSaved }) {
   );
 }
 
+// Learning module card — used in Browse and Employer-demand lists.
+function ModuleCard({ module, demand, onOpen }) {
+  const date = module.updatedAt ? new Date(module.updatedAt).toLocaleDateString() : '';
+  return (
+    <div
+      className="bg-white rounded-2xl border border-secondary/10 p-5 flex flex-col cursor-pointer hover:border-primary/40 hover:shadow-md transition-all"
+      onClick={onOpen}
+    >
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center shrink-0">
+            <GraduationCap className="w-5 h-5 text-secondary" />
+          </div>
+          <h3 className="font-display font-bold text-secondary leading-snug truncate">{module.role}</h3>
+        </div>
+        {demand && (
+          <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+            <Globe className="w-2.5 h-2.5" /> live demand
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-1 mb-3">
+        {(module.skills || []).slice(0, 4).map((s) => (
+          <span key={s} className="inline-flex items-center gap-1 text-[10px] font-medium bg-primary/15 text-secondary px-2 py-0.5 rounded-full">
+            <Tag className="w-2.5 h-2.5" /> {s}
+          </span>
+        ))}
+        {(module.skills || []).length > 4 && (
+          <span className="text-[10px] text-secondary/40">+{(module.skills || []).length - 4}</span>
+        )}
+      </div>
+
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
+        <span className="text-[11px] text-secondary/40">{date ? `Updated ${date}` : ''}</span>
+        <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent transition-colors">
+          {(module.courses || []).length} courses <ExternalLink className="w-3 h-3" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Compact module summary shown right after a hub generates one.
+function ModuleSummary({ module, openModule }) {
+  return (
+    <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <BookOpen className="w-4 h-4 text-secondary shrink-0" />
+          <h4 className="font-display font-semibold text-secondary truncate">{module.role}</h4>
+        </div>
+        <button onClick={openModule} className="shrink-0 inline-flex items-center gap-1 text-xs font-bold text-secondary bg-secondary/10 hover:bg-secondary/20 px-3 py-1.5 rounded-lg transition-colors">
+          Open module <ExternalLink className="w-3 h-3" />
+        </button>
+      </div>
+      <div className="text-xs text-secondary/60 mb-3">{module.marketNote || 'Module ready — includes courses, tools and resources.'}</div>
+      <div className="flex flex-wrap gap-1">
+        {(module.skills || []).slice(0, 6).map((s) => (
+          <span key={s} className="inline-flex items-center gap-1 text-[10px] font-medium bg-white text-secondary px-2 py-0.5 rounded-full border border-secondary/10">
+            <Tag className="w-2.5 h-2.5" /> {s}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function HubDashboard() {
   const { user, signOut } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
-  const [tab, setTab] = useState('grants'); // 'grants' | 'talent' | 'profile'
+  const [tab, setTab] = useState('grants'); // 'grants' | 'talent' | 'learning' | 'profile'
   const [link, setLink] = useState('');
   const [count, setCount] = useState(0);
   const [seekers, setSeekers] = useState([]);
@@ -171,6 +244,67 @@ export default function HubDashboard() {
   const [orgReading, setOrgReading] = useState(false);
   const logoRef = useRef(null);
   const [supportOpen, setSupportOpen] = useState(false);
+  // Learning modules state
+  const [learnSub, setLearnSub] = useState('browse'); // browse | request | demand
+  const [modules, setModules] = useState([]);
+  const [demandModules, setDemandModules] = useState([]);
+  const [loadingModules, setLoadingModules] = useState(false);
+  const [moduleQ, setModuleQ] = useState('');
+  const [roleInput, setRoleInput] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg] = useState('');
+  const [selectedModule, setSelectedModule] = useState(null);
+
+  const loadModules = async () => {
+    setLoadingModules(true);
+    try {
+      const [b, d] = await Promise.all([
+        fetch(`${API_URL}/learning/modules`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/learning/demand`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (b.ok) setModules((await b.json()).modules || []);
+      if (d.ok) setDemandModules((await d.json()).modules || []);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingModules(false);
+    }
+  };
+
+  const generateModule = async () => {
+    const role = roleInput.trim();
+    if (!role) return;
+    setGenerating(true);
+    setGenMsg('');
+    try {
+      const res = await fetch(`${API_URL}/learning/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.message || 'Could not generate the module.');
+      setSelectedModule(d.module);
+      setGenMsg('Module generated — open it below and share the skills with your talent pool.');
+      setRoleInput('');
+      await loadModules();
+    } catch (e) {
+      setGenMsg(e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const filteredModules = modules.filter((m) => {
+    const query = moduleQ.trim().toLowerCase();
+    if (!query) return true;
+    return [m.role, ...(m.skills || []), ...(m.tools || [])].join(' ').toLowerCase().includes(query);
+  });
+
+  useEffect(() => {
+    if (tab === 'learning') loadModules();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
 
   const token = localStorage.getItem('tbai.token');
 
@@ -370,6 +504,16 @@ export default function HubDashboard() {
             <Users className="w-4 h-4" /> Talent Pool
           </button>
           <button
+            onClick={() => setTab('learning')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'learning'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <GraduationCap className="w-4 h-4" /> Learning Modules
+          </button>
+          <button
             onClick={() => setTab('profile')}
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
               tab === 'profile'
@@ -482,6 +626,151 @@ export default function HubDashboard() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Learning Modules Tab ─────────────────────────────────────── */}
+        {tab === 'learning' && (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="font-display text-lg font-bold text-secondary">Learning Modules</h2>
+                <p className="text-sm text-secondary/50 mt-0.5">
+                  Approved courses and tools for every role — updated from live employer demand so your training stays ahead of the market.
+                </p>
+              </div>
+              <button
+                onClick={() => setLearnSub('request')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold text-white bg-secondary hover:bg-accent transition-colors"
+              >
+                <Wand2 className="w-4 h-4" /> Request a module
+              </button>
+            </div>
+
+            {genMsg && (
+              <div className={`p-3 rounded-xl text-sm mb-4 ${genMsg.toLowerCase().includes('error') || genMsg.toLowerCase().includes('could not') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-800 border border-green-200'}`}>
+                {genMsg}
+              </div>
+            )}
+
+            {/* Sub-tabs */}
+            <div className="flex gap-2 mb-5 bg-secondary/5 p-1 rounded-xl w-fit">
+              {[
+                { id: 'browse', label: 'Browse' },
+                { id: 'request', label: 'Request a module' },
+                { id: 'demand', label: 'Employer demand' },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => { setLearnSub(s.id); if (s.id === 'demand' && !demandModules.length) loadModules(); }}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                    learnSub === s.id ? 'bg-primary text-secondary shadow-md' : 'text-secondary/60 hover:text-secondary'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {loadingModules ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </div>
+            ) : (
+              <>
+                {learnSub === 'request' && (
+                  <div className="bg-white rounded-3xl border border-secondary/10 p-6 sm:p-8 mb-6">
+                    <h3 className="font-display font-bold text-secondary mb-1">Generate a learning module</h3>
+                    <p className="text-sm text-secondary/60 mb-4">
+                      Type the role your talents need to be trained for. The AI builds a full module — skills, tools, courses and free
+                      resources — for your learning program.
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <input
+                        value={roleInput}
+                        onChange={(e) => setRoleInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && generateModule()}
+                        placeholder="e.g. Frontend Developer"
+                        className={`${inputCls} sm:flex-1`}
+                      />
+                      <button
+                        onClick={generateModule}
+                        disabled={generating || !roleInput.trim()}
+                        className="inline-flex items-center justify-center gap-1.5 px-6 py-2.5 rounded-xl text-sm font-bold text-secondary bg-primary hover:bg-primary/90 transition-colors disabled:opacity-60"
+                      >
+                        {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                        {generating ? 'Generating…' : 'Generate module'}
+                      </button>
+                    </div>
+                    {selectedModule && (
+                      <div className="mt-6">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-display font-semibold text-secondary">Your latest module</h4>
+                          <button
+                            onClick={() => setSelectedModule(null)}
+                            className="text-xs font-semibold text-secondary/50 hover:text-secondary"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                        <ModuleSummary module={selectedModule} openModule={() => setSelectedModule(selectedModule)} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {learnSub === 'demand' && (
+                  <div className="mb-6">
+                    <div className="p-3 rounded-xl bg-[#fdf6ec] border border-amber-200 text-sm text-amber-800 mb-4">
+                      <strong>Live demand:</strong> these modules were auto-created from real employer requests on the platform. Add these skills
+                      to your training so your talents match what companies are hiring for right now.
+                    </div>
+                    {demandModules.length === 0 ? (
+                      <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
+                        <Globe className="w-8 h-8 text-primary mx-auto mb-3" />
+                        <p className="font-display font-bold text-secondary">No employer demand yet</p>
+                        <p className="text-sm text-secondary/60 mt-1">Modules appear here the moment an employer posts a talent request.</p>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 gap-4">
+                        {demandModules.map((m) => (
+                          <ModuleCard key={m.id} module={m} demand onOpen={() => setSelectedModule(m)} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {learnSub === 'browse' && (
+                  <div>
+                    <div className="relative mb-5">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary/40" />
+                      <input
+                        value={moduleQ}
+                        onChange={(e) => setModuleQ(e.target.value)}
+                        placeholder="Search modules by role, skill or tool…"
+                        className={`${inputCls} pl-10`}
+                      />
+                    </div>
+                    {filteredModules.length === 0 ? (
+                      <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
+                        <BookOpen className="w-8 h-8 text-primary mx-auto mb-3" />
+                        <p className="font-display font-bold text-secondary">No modules yet</p>
+                        <p className="text-sm text-secondary/60 mt-1">
+                          Request a module for a role — or one appears automatically when an employer asks for that role.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredModules.map((m) => (
+                          <ModuleCard key={m.id} module={m} onOpen={() => setSelectedModule(m)} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -899,6 +1188,125 @@ export default function HubDashboard() {
                   </a>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Learning module detail modal ───────────────────────────────── */}
+      {selectedModule && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setSelectedModule(null)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white/90 backdrop-blur-md border-b border-secondary/10 px-6 py-4 flex items-start justify-between gap-4 rounded-t-3xl z-10">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-2xl bg-primary/15 flex items-center justify-center shrink-0">
+                  <GraduationCap className="w-6 h-6 text-secondary" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-display text-xl font-bold text-secondary leading-tight truncate">{selectedModule.role}</h3>
+                  <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                    {selectedModule.source === 'demand' && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                        <Globe className="w-2.5 h-2.5" /> from live employer demand
+                      </span>
+                    )}
+                    <span className="text-[11px] text-secondary/40">
+                      Updated {selectedModule.updatedAt ? new Date(selectedModule.updatedAt).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setSelectedModule(null)} className="p-2 rounded-lg hover:bg-secondary/5 transition-colors shrink-0">
+                <X className="w-5 h-5 text-secondary/60" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-6">
+              {selectedModule.marketNote && (
+                <div className="p-4 rounded-xl bg-primary/10 border border-primary/20 text-sm text-secondary leading-relaxed">
+                  {selectedModule.marketNote}
+                </div>
+              )}
+
+              {(selectedModule.skills || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/50 mb-2">Skills to master</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedModule.skills.map((s2) => (
+                      <span key={s2} className="inline-flex items-center gap-1 text-xs font-medium bg-primary/15 text-secondary px-2.5 py-1 rounded-full">
+                        <Tag className="w-3 h-3" /> {s2}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(selectedModule.tools || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/50 mb-2">Tools the role uses</h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedModule.tools.map((t) => (
+                      <span key={t} className="text-xs font-medium bg-secondary/5 text-secondary px-2.5 py-1 rounded-full border border-secondary/10">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(selectedModule.courses || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/50 mb-3">Recommended courses</h4>
+                  <div className="space-y-3">
+                    {selectedModule.courses.map((c, i) => (
+                      <div key={i} className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-secondary/10">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-secondary text-sm leading-snug">{c.title || 'Untitled course'}</div>
+                          {c.provider && <div className="text-xs text-secondary/50 mt-0.5">{c.provider}{c.duration ? ` · ${c.duration}` : ''}</div>}
+                          {c.description && <div className="text-sm text-secondary/70 mt-1 leading-relaxed">{c.description}</div>}
+                        </div>
+                        {c.url && (
+                          <a
+                            href={c.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="shrink-0 inline-flex items-center gap-1 text-xs font-bold text-secondary bg-primary/15 hover:bg-primary/25 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            Start <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(selectedModule.resources || []).length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-secondary/50 mb-2">Free resources & practice</h4>
+                  <ul className="space-y-1.5">
+                    {selectedModule.resources.map((r, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-secondary/70">
+                        <BookOpen className="w-3.5 h-3.5 mt-0.5 text-primary shrink-0" />
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {selectedModule.demandNote && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">{selectedModule.demandNote}</div>
+              )}
+            </div>
+
+            <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-secondary/10 px-6 py-4 flex items-center justify-end gap-3 rounded-b-3xl">
+              <button
+                onClick={() => setSelectedModule(null)}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold bg-secondary text-white hover:bg-accent transition-colors"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>

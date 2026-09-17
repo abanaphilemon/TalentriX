@@ -39,6 +39,7 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
   // Connect step
   const [step, setStep] = useState('boot'); // boot | connect | draft | sent
   const [connectProvider, setConnectProvider] = useState('gmail');
+  const [providerTouched, setProviderTouched] = useState(false);
   const [connectEmail, setConnectEmail] = useState('');
   const [connectName, setConnectName] = useState('');
   const [connectHost, setConnectHost] = useState('');
@@ -47,6 +48,10 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
   const [connectPassword, setConnectPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [connectBusy, setConnectBusy] = useState(false);
+  const [canSkip, setCanSkip] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [disconnectBusy, setDisconnectBusy] = useState(false);
+  const [verified, setVerified] = useState(false);
 
   // Draft step
   const [draftBusy, setDraftBusy] = useState(false);
@@ -66,10 +71,12 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
           fetch(`${API_URL}/ai/status`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_URL}/email/status`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
-        const ai = aiRes.ok ? await aiRes.json() : null;
-        const mail = mailRes.ok ? await mailRes.json() : null;
+        if (!aiRes.ok) throw new Error('Your session may have expired — please log in again.');
+        const ai = await aiRes.json();
+        const mail = mailRes.ok ? await mailRes.json() : { connected: false, connection: null, verified: false };
         setAiStatus(ai);
         setEmail(mail?.connection || null);
+        setVerified(!!mail?.verified);
 
         if (!ai?.configured) {
           setStep('notConfigured');
@@ -78,8 +85,9 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
         } else {
           setStep('draft');
         }
-      } catch {
-        setError('Could not reach the server. Please try again.');
+      } catch (e) {
+        setError(e.message || 'Could not reach the server. Please try again.');
+        setStep('connect');
       } finally {
         setLoading(false);
       }
@@ -112,16 +120,28 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, step]);
 
+  // Only auto-suggest a provider while the email address is being typed for
+  // the first time — never after the user has manually picked one (custom SMTP
+  // setups stay intact, and gmail/outlook addresses don't hijack a custom host).
   const pickProviderFromEmail = (value) => {
+    if (providerTouched) return;
     const domain = String(value).split('@')[1]?.toLowerCase() || '';
+    if (!domain) return;
     if (domain.includes('gmail') || domain.includes('googlemail')) setConnectProvider('gmail');
     else if (/(outlook|hotmail|live|msn|office365|microsoft)/.test(domain)) setConnectProvider('outlook');
-    else setConnectProvider('smtp');
+    else return;
   };
 
-  const submitConnect = async () => {
+  const pickProvider = (id) => {
+    setProviderTouched(true);
+    setCanSkip(false);
+    setConnectProvider(id);
+  };
+
+  const submitConnect = async (skip = false) => {
     setConnectBusy(true);
     setError('');
+    setCanSkip(false);
     try {
       const res = await fetch(`${API_URL}/email/connect`, {
         method: 'POST',
@@ -134,16 +154,83 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
           port: connectPort,
           secure: connectSecure,
           password: connectPassword,
+          skipVerify: skip,
         }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d.message || 'Could not connect the mailbox.');
+      if (!res.ok) {
+        if (d.canSkip) setCanSkip(true);
+        throw new Error(d.message || 'Could not connect the mailbox.');
+      }
       setEmail(d);
+      setVerified(!!d.verified);
       setStep('draft');
     } catch (e) {
       setError(e.message);
     } finally {
       setConnectBusy(false);
+    }
+  };
+
+  const oauthDial = (kind) => {
+    setOauthBusy(true);
+    setError('');
+    setProviderTouched(true);
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/oauth/${kind}/auth`, { headers: { Authorization: `Bearer ${token}` } });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.message || 'OAuth could not start.');
+        const win = window.open(d.url, '_blank', 'noopener,noreferrer,width=480,height=640');
+        if (!win) {
+          setError('Pop-up blocked — allow pop-ups for this site and try again.');
+          setOauthBusy(false);
+          return;
+        }
+        let tries = 0;
+        const iv = setInterval(async () => {
+          tries += 1;
+          try {
+            const s = await fetch(`${API_URL}/email/status`, { headers: { Authorization: `Bearer ${token}` } });
+            const st = await s.json();
+            if (st.connected && st.connection) {
+              clearInterval(iv);
+              setEmail(st.connection);
+              setVerified(true);
+              setStep('draft');
+              setOauthBusy(false);
+            } else if (tries > 40) {
+              clearInterval(iv);
+              setError('Still waiting for the connection… if the window closed, tap “Use the mailbox I just connected”.');
+              setOauthBusy(false);
+            }
+          } catch {
+            if (tries > 40) { clearInterval(iv); setOauthBusy(false); }
+          }
+        }, 5000);
+      } catch (e) {
+        setError(e.message);
+        setOauthBusy(false);
+      }
+    })();
+  };
+
+  const disconnectMailbox = async () => {
+    setDisconnectBusy(true);
+    setError('');
+    try {
+      await fetch(`${API_URL}/email/connect`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      setEmail(null);
+      setVerified(false);
+      setConnectEmail('');
+      setConnectPassword('');
+      setConnectName('');
+      setCanSkip(false);
+      setStep('connect');
+    } catch {
+      setError('Could not disconnect the mailbox.');
+    } finally {
+      setDisconnectBusy(false);
     }
   };
 
@@ -254,7 +341,9 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
           {!loading && step === 'connect' && (
             <div className="space-y-5">
               <StatusRow icon={MailPlus}>
-                Connect the email you want the application sent from. We&rsquo;ll send the cover letter <span className="font-semibold text-secondary">and your CV</span> from that inbox.
+                Connect the email you want applications sent from <span className="font-semibold text-secondary">once</span> — it&rsquo;s saved to your
+                account and used for every job you apply to. We&rsquo;ll send the cover letter <span className="font-semibold text-secondary">and your CV</span> from
+                that inbox.
               </StatusRow>
 
               <div>
@@ -267,7 +356,7 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
                   ].map((p) => (
                     <button
                       key={p.id}
-                      onClick={() => setConnectProvider(p.id)}
+                      onClick={() => pickProvider(p.id)}
                       className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${
                         connectProvider === p.id ? 'border-primary bg-primary/10 text-secondary shadow-sm' : 'border-secondary/10 text-secondary/60 hover:bg-secondary/5'
                       }`}
@@ -276,6 +365,22 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
                     </button>
                   ))}
                 </div>
+
+                {(connectProvider === 'gmail' || connectProvider === 'outlook') && (
+                  <div className="mt-3 flex items-center gap-3 p-3 rounded-xl bg-secondary/[0.02] border border-secondary/10">
+                    <button
+                      onClick={() => oauthDial(connectProvider === 'gmail' ? 'google' : 'microsoft')}
+                      disabled={oauthBusy}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white bg-secondary hover:bg-accent transition-colors disabled:opacity-60"
+                    >
+                      {oauthBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                      Connect with {connectProvider === 'gmail' ? 'Google' : 'Microsoft'} OAuth
+                    </button>
+                    <span className="text-xs text-secondary/50 leading-snug">
+                      More reliable than an app password — especially if your provider has retired SMTP login for your account.
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4">
@@ -299,7 +404,7 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
                   <label className={labelCls}>
                     App password{' '}
                     <span className="normal-case font-medium text-secondary/40">
-                      ({connectProvider === 'gmail' ? 'Google Account → Security → App passwords' : connectProvider === 'outlook' ? 'Microsoft account → Security → App password' : 'SMTP password'})
+                      ({connectProvider === 'gmail' ? 'Google Account → Security → App passwords (2-Step Verification must be ON)' : connectProvider === 'outlook' ? 'Outlook may not accept app passwords anymore — use OAuth above if you hit errors' : 'SMTP password'})
                     </span>
                   </label>
                   <div className="relative">
@@ -340,22 +445,41 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-3 pt-1">
+              {canSkip && (
+                <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-amber-50 border border-amber-200">
+                  <span className="text-xs text-amber-800 leading-snug">
+                    Couldn&rsquo;t verify the mailbox right now (your network may block email ports). You can still save it and try sending an
+                    application.
+                  </span>
+                  <button
+                    onClick={() => submitConnect(true)}
+                    disabled={connectBusy}
+                    className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 transition-colors disabled:opacity-60"
+                  >
+                    Save anyway
+                  </button>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
                 {email && (
                   <button
-                    onClick={() => setStep('draft')}
+                    onClick={() => {
+                      setVerified(email.verified !== false);
+                      setStep('draft');
+                    }}
                     className="px-4 py-2.5 rounded-xl text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 transition-colors"
                   >
                     Use already-connected {email.email}
                   </button>
                 )}
                 <button
-                  onClick={submitConnect}
-                  disabled={connectBusy || !connectEmail || !connectPassword}
+                  onClick={() => submitConnect(false)}
+                  disabled={connectBusy || oauthBusy || !connectEmail || !connectPassword}
                   className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold text-secondary bg-primary hover:bg-primary/90 transition-colors disabled:opacity-60"
                 >
                   {connectBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                  Connect &amp; continue
+                  Test &amp; connect
                 </button>
               </div>
             </div>
@@ -381,27 +505,47 @@ export default function AiApplyModal({ job, token, onClose, onApplied }) {
                         <div className="text-sm min-w-0">
                           <span className="font-semibold text-secondary">Sending from: </span>
                           <span className="text-secondary/70 truncate">{email.email}</span>
+                          {verified ? (
+                            <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                              <CheckCircle2 className="w-3 h-3" /> verified
+                            </span>
+                          ) : (
+                            <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+                              <AlertCircle className="w-3 h-3" /> not verified — sending may fail
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <button
-                        onClick={async () => {
-                          setError('');
-                          try {
-                            const res = await fetch(`${API_URL}/email/status`, { headers: { Authorization: `Bearer ${token}` } });
-                            if (res.ok) {
-                              const d = await res.json();
-                              if (!d.connected || !d.connection) {
-                                setEmail(null);
-                                setStep('connect');
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={async () => {
+                            setError('');
+                            try {
+                              const res = await fetch(`${API_URL}/email/status`, { headers: { Authorization: `Bearer ${token}` } });
+                              if (res.ok) {
+                                const d = await res.json();
+                                setVerified(!!d.verified);
+                                if (!d.connected || !d.connection) {
+                                  setEmail(null);
+                                  setStep('connect');
+                                }
                               }
-                            }
-                          } catch { /* ignore */ }
-                        }}
-                        title="Change mailbox"
-                        className="p-2 rounded-lg hover:bg-secondary/10 text-secondary/50 transition-colors shrink-0"
-                      >
-                        <RefreshCw className="w-4 h-4" />
-                      </button>
+                            } catch { /* ignore */ }
+                          }}
+                          title="Re-check mailbox"
+                          className="p-2 rounded-lg hover:bg-secondary/10 text-secondary/50 transition-colors"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={disconnectMailbox}
+                          disabled={disconnectBusy}
+                          title="Disconnect & use a different mailbox"
+                          className="p-2 rounded-lg hover:bg-red-50 text-red-500/70 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   )}
 
