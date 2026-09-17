@@ -21,6 +21,7 @@ import SeekerDashboard from './pages/SeekerDashboard.jsx';
 import PortfolioPage from './pages/PortfolioPage.jsx';
 import EmployerDashboard from './pages/EmployerDashboard.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
+import TermsPage from './pages/TermsPage.jsx';
 import AdminLoginPage from './pages/AdminLoginPage.jsx';
 import AdminDashboard from './pages/AdminDashboard.jsx';
 import OnboardingPage from './pages/OnboardingPage.jsx';
@@ -345,6 +346,9 @@ export default function App() {
 
                 {/* Registration — only for guests */}
                 <Route path="/register" element={<RequireGuest><RegisterPage /></RequireGuest>} />
+
+                {/* Public terms & conditions */}
+                <Route path="/terms" element={<TermsPage />} />
 
                 {/* Onboarding — only for users who haven't finished it yet */}
                 <Route path="/onboarding" element={<RequireOnboarding />} />

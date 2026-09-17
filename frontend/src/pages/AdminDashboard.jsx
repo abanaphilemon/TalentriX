@@ -37,6 +37,7 @@ import { readImageFile } from '../lib/image.js';
 import SupportManager from '../components/SupportManager.jsx';
 import AiConfig from '../components/AiConfig.jsx';
 import LearningAdmin from '../components/LearningAdmin.jsx';
+import EmailConfig from '../components/EmailConfig.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 const ADMIN_TOKEN_KEY = 'tbai.adminToken';
@@ -109,6 +110,13 @@ const SECTION_GROUPS = [
     items: [
       { id: 'ai', label: 'AI Auto-Apply', desc: 'Connect an AI provider, pick a model, and review AI applications.', special: 'ai' },
       { id: 'learning', label: 'Learning Modules', desc: 'AI learning modules per role plus employer-demand skill analysis.', special: 'learning' },
+    ],
+  },
+  {
+    id: 'email',
+    label: 'Email & Security',
+    items: [
+      { id: 'email', label: 'SMTP & OAuth Settings', desc: 'Platform email delivery and the OAuth apps talents use to connect mailboxes.', special: 'email' },
     ],
   },
   {
@@ -817,7 +825,7 @@ export default function AdminDashboard() {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        if (dirty && section !== 'reviews' && section !== 'users' && section !== 'interviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'account' && !saving) save();
+        if (dirty && section !== 'reviews' && section !== 'users' && section !== 'interviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'email' && section !== 'account' && !saving) save();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -958,7 +966,7 @@ export default function AdminDashboard() {
                 <h2 className="font-display text-xl font-bold text-secondary">{activeMeta?.label}</h2>
                 {activeMeta?.desc && <p className="text-sm text-secondary/60 mt-0.5">{activeMeta.desc}</p>}
               </div>
-{section !== 'reviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
+{section !== 'reviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'email' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
                 <div className="flex gap-2">
                   <button
                     onClick={() => setForm(current !== undefined ? clone(current) : {})}
@@ -986,7 +994,7 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
+            {dirty && section !== 'reviews' && section !== 'payments' && section !== 'ai' && section !== 'learning' && section !== 'email' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && (
               <div className="mb-5 flex items-center gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 Unsaved changes to this section.
@@ -1025,6 +1033,10 @@ export default function AdminDashboard() {
             ) : section === 'learning' ? (
               <EditorBoundary>
                 <LearningAdmin token={token} />
+              </EditorBoundary>
+            ) : section === 'email' ? (
+              <EditorBoundary>
+                <EmailConfig token={token} />
               </EditorBoundary>
             ) : section === 'users' ? (
               <EditorBoundary>
@@ -1088,7 +1100,7 @@ export default function AdminDashboard() {
             )}
 
             {/* Danger zone: reset everything */}
-            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && section !== 'learning' && (
+            {section !== 'reviews' && section !== 'payments' && section !== 'users' && section !== 'interviews' && section !== 'support' && section !== 'account' && section !== 'learning' && section !== 'email' && (
               <div className="mt-10 pt-6 border-t border-secondary/10 flex items-center justify-between gap-4">
                 <div>
                   <div className="text-sm font-bold text-secondary">Reset all content</div>

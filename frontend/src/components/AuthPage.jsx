@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -23,6 +24,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import { roles } from '../data/content.js';
+import OtpEntry from './OtpEntry.jsx';
 
 // Inline Google "G" mark — used in the fallback button when GIS hasn't loaded
 const GoogleG = () => (
@@ -137,6 +139,7 @@ export default function AuthPage() {
 
   const [tab, setTab] = useState('login');    // 'login' | 'register'
   const [submitError, setSubmitError] = useState('');
+  const [otp, setOtp] = useState(null);        // { purpose, email, devCode, role } while the code step is open
 
   const { content } = useContent();
   const brandName = content.branding?.name || 'TalentriX';
@@ -164,6 +167,7 @@ export default function AuthPage() {
     setSubmitError('');
     const res = await loginWithEmail(data);
     if (!res.ok) setSubmitError(res.error);
+    else if (res.requiresOtp) setOtp({ purpose: res.purpose || 'login', email: data.email, devCode: res.devCode, role });
   };
 
   const onSubmitRegister = async (data) => {
@@ -172,8 +176,15 @@ export default function AuthPage() {
       setSubmitError('Passwords do not match.');
       return;
     }
-    const res = await registerWithEmail(data);
+    if (!data.terms) {
+      setSubmitError('Please accept the Terms & Conditions to continue.');
+      return;
+    }
+    const res = await registerWithEmail({ ...data, termsAccepted: !!data.terms });
     if (!res.ok) setSubmitError(res.error);
+    else if (res.verification?.needed) {
+      setOtp({ purpose: 'verify', email: data.email, devCode: res.verification.devCode, role });
+    }
   };
 
   // Google login — both tabs use the same handler
@@ -317,6 +328,18 @@ export default function AuthPage() {
                     : 'Just a few details and you\'re in.'}
                 </p>
 
+                {otp ? (
+                  <OtpEntry
+                    purpose={otp.purpose}
+                    email={otp.email}
+                    devCode={otp.devCode}
+                    role={otp.role || role}
+                    onSuccess={closeAuth}
+                    onBack={() => setOtp(null)}
+                    title={otp.purpose === 'login' ? 'Check your inbox' : 'Verify your email'}
+                  />
+                ) : (
+                <>
                 {/* Tabs */}
                 <div className="flex gap-1 p-1 bg-secondary/5 rounded-xl mb-6">
                   {['login', 'register'].map((t) => (
@@ -454,6 +477,24 @@ export default function AuthPage() {
                     </div>
                   )}
 
+                  {tab === 'register' && (
+                    <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 w-4 h-4 accent-primary"
+                        {...register('terms', { required: 'Please accept the Terms & Conditions' })}
+                      />
+                      <span className="text-xs text-secondary/60 leading-relaxed">
+                        I have read and agree to the{' '}
+                        <Link to="/terms" className="underline font-semibold text-secondary hover:text-primary">
+                          Terms &amp; Conditions
+                        </Link>
+                        {' '}and verifiable identity policy.
+                      </span>
+                    </label>
+                  )}
+                  {errors.terms && <p className="text-xs text-red-600 -mt-1">{errors.terms.message}</p>}
+
                   {submitError && (
                     <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
                       <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -473,15 +514,17 @@ export default function AuthPage() {
 
                 <p className="mt-6 text-xs text-secondary/50 text-center">
                   By continuing, you agree to our{' '}
-                  <a href="#" className="underline hover:text-secondary">
-                    Terms
-                  </a>{' '}
-                  and{' '}
+                  <Link to="/terms" className="underline hover:text-secondary">
+                    Terms &amp; Conditions
+                  </Link>
+                  {' '}and{' '}
                   <a href="#" className="underline hover:text-secondary">
                     Privacy Policy
                   </a>
                   .
                 </p>
+                </>
+                )}
               </div>
             </div>
             </div>

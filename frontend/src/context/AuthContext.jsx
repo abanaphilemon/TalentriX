@@ -100,13 +100,15 @@ export function AuthProvider({ children }) {
 
   const backToRoles = useCallback(() => setMode('role'), []);
 
-  // Register with backend API
-  const registerWithEmail = useCallback(async ({ name, email, password, hubRef }) => {
+  // Register with backend API. New accounts must accept the Terms and verify
+  // their email with a 6-digit code, so this returns `verification` when the
+  // code still needs to be entered (the user stays logged in meanwhile).
+  const registerWithEmail = useCallback(async ({ name, email, password, hubRef, termsAccepted }) => {
     try {
       const res = await fetch(`${API_URL}/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, role, hubRef: hubRef || null }),
+        body: JSON.stringify({ name, email, password, role, hubRef: hubRef || null, termsAccepted }),
       });
 
       const data = await res.json();
@@ -116,18 +118,26 @@ export function AuthProvider({ children }) {
       }
 
       localStorage.setItem(STORAGE.token, data.token);
-      setUser(data.user);
-      setRole(data.user.role);
       localStorage.setItem(STORAGE.role, data.user.role);
-      setMode('closed');
-      registerChatKey(data.token);
-      return { ok: true, user: data.user };
+      setRole(data.user.role);
+      setUser(data.user);
+      if (!data.verification?.needed) {
+        setMode('closed');
+        registerChatKey(data.token);
+      } else {
+        // Email code step at the sign-up screen — mode stays open so the OTP
+        // view can take over, but only when the user came through the modal.
+        if (mode !== 'auth') setMode('closed');
+      }
+      return { ok: true, user: data.user, verification: data.verification };
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
     }
-  }, [role]);
+  }, [role]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Login with backend API
+  // Login with backend API. When the account has 2FA on, or hasn't been
+  // verified yet, the server sends a code first and no session is created
+  // until it's entered via verifyOtp.
   const loginWithEmail = useCallback(async ({ email, password, role: roleOverride }) => {
     try {
       const roleParam = roleOverride || role;
@@ -143,6 +153,16 @@ export function AuthProvider({ children }) {
         return { ok: false, error: data.message || 'Login failed' };
       }
 
+      if (data.requiresOtp) {
+        return {
+          ok: true,
+          requiresOtp: true,
+          purpose: data.purpose || 'login',
+          email: data.email,
+          devCode: data.devCode,
+        };
+      }
+
       localStorage.setItem(STORAGE.token, data.token);
       setUser(data.user);
       setRole(data.user.role);
@@ -154,6 +174,69 @@ export function AuthProvider({ children }) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
     }
   }, [role]);
+
+  // Submit an emailed code. `purpose` is 'verify' right after signing up or
+  // 'login' mid-sign-in (that flow returns a session token to finish logging in).
+  const verifyOtp = useCallback(async ({ code, purpose, email, role: roleOverride }) => {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = localStorage.getItem(STORAGE.token);
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${API_URL}/verify-otp`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          code,
+          purpose,
+          ...(token ? {} : { email, role: roleOverride }),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Verification failed' };
+      }
+
+      const finalUser = data.user || (user ? { ...user, emailVerified: true } : null);
+      if (data.token) {
+        localStorage.setItem(STORAGE.token, data.token);
+        setUser(data.user);
+        setRole(data.user.role);
+        localStorage.setItem(STORAGE.role, data.user.role);
+        setMode('closed');
+        registerChatKey(data.token);
+      } else if (data.user) {
+        setUser(data.user);
+      }
+      return { ok: true, user: finalUser };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [user, role]);
+
+  // Ask the server for a fresh code (wrong/expired code, or a lost email).
+  const resendOtp = useCallback(async ({ purpose, email, role: roleOverride }) => {
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const token = localStorage.getItem(STORAGE.token);
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${API_URL}/resend-otp`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ purpose, ...(token ? {} : { email, role: roleOverride }) }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Could not resend the code' };
+      }
+      return { ok: true, sent: data.sent, devCode: data.devCode };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, []);
 
   // Google sign-in — stores profile locally (can be extended to call backend)
   const signInWithGoogle = useCallback((googleProfile) => {
@@ -222,6 +305,8 @@ export function AuthProvider({ children }) {
     signInWithGoogle,
     loginWithEmail,
     registerWithEmail,
+    verifyOtp,
+    resendOtp,
     signOut,
     updateUser,
     adminLogin,

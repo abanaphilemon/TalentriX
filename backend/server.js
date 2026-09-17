@@ -32,20 +32,172 @@ if (SMTP_HOST && SMTP_USER && SMTP_PASS) {
   });
 }
 
+// The platform's outgoing mail. The admin can override delivery from the
+// panel (SiteConfig('email')); anything unset falls back to the env SMTP.
+// Env credentials beat nothing, so development without a server still works.
+async function platformMailConfig() {
+  try {
+    const cfg = (await getConfig('email')) || {};
+    if (cfg.host && (cfg.user || cfg.email) && cfg.password) {
+      const user = String(cfg.user || cfg.email).trim();
+      return {
+        name: String(cfg.fromName || 'TalentriX').trim() || 'TalentriX',
+        addr: user || SMTP_USER || 'noreply@talentri-x.vercel.app',
+        transport: nodemailer.createTransport({
+          host: cfg.host,
+          port: Number(cfg.port || 587),
+          secure: !!cfg.secure,
+          auth: { user, pass: decryptSecret(cfg.password) },
+          connectionTimeout: 15000,
+          greetingTimeout: 15000,
+          socketTimeout: 30000,
+        }),
+      };
+    }
+  } catch {
+    // DB unavailable yet — fall through to env credentials.
+  }
+  if (transporter) {
+    return {
+      name: 'TalentriX',
+      addr: SMTP_USER || 'noreply@talentri-x.vercel.app',
+      transport: transporter,
+    };
+  }
+  return null;
+}
+
 async function sendMail({ to, subject, html }) {
   if (!to) return false;
   try {
-    if (!transporter) {
+    const conf = await platformMailConfig();
+    if (!conf) {
       console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
       return false;
     }
-    await transporter.sendMail({ from: MAIL_FROM, to, subject, html });
+    await conf.transport.sendMail({ from: `"${conf.name}" <${conf.addr}>`, to, subject, html });
     console.log(`[email:sent] to=${to} subject="${subject}"`);
     return true;
   } catch (error) {
     console.error('[email:error]', error.message);
     return false;
   }
+}
+
+// ── Account verification & 2FA (email codes) ────────────────────────────────
+// 6-digit codes are bcrypt-hashed before storage so the DB alone can't reveal
+// them. Codes expire after 10 minutes and an account can make 5 attempts.
+
+function maskEmail(email) {
+  if (!email) return '';
+  const [a, b] = String(email).split('@');
+  if (!b) return '•••';
+  const head = a.slice(0, Math.min(2, a.length));
+  return `${head}${'•'.repeat(Math.max(1, a.length - 2))}@${b}`;
+}
+
+async function generateOtp(user, purpose) {
+  const code = String(nodeCrypto.randomInt(100000, 1000000));
+  user.otp = {
+    hash: await bcrypt.hash(code, 6),
+    expires: new Date(Date.now() + 10 * 60 * 1000),
+    purpose,
+    attempts: 0,
+  };
+  await user.save();
+  return code;
+}
+
+async function sendOtpEmail(user, purpose) {
+  const code = await generateOtp(user, purpose);
+  const isLogin = purpose === 'login';
+  const subject = isLogin ? 'Your TalentriX login code' : 'Verify your TalentriX account';
+  const html = otpEmailHtml(code, purpose);
+  const sent = await sendMail({ to: user.email, subject, html });
+  // When delivery isn't configured the code is returned so development still
+  // works; when mail is working the code is only ever delivered by email.
+  return { sent, code: sent ? '' : code };
+}
+
+const OTP_LOGIN_MSGS = {
+  login: {
+    title: 'Login code',
+    lead: 'We received a request to sign in to your TalentriX account. Enter the code below to complete the sign-in. The code expires in 10 minutes.',
+  },
+  verify: {
+    title: 'Verify your account',
+    lead: 'Almost there — use the code below to verify your email address and finish activating your account. The code expires in 10 minutes.',
+  },
+  reset: {
+    title: 'Password reset code',
+    lead: 'Use the code below to reset your TalentriX password. The code expires in 10 minutes.',
+  },
+};
+
+function otpEmailHtml(code, purpose) {
+  const m = OTP_LOGIN_MSGS[purpose] || OTP_LOGIN_MSGS.login;
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!doctype html>
+<html lang="en"><body style="margin:0;padding:0;background:#f4f1ea;">
+  <div style="max-width:560px;margin:0 auto;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#1c2333;">
+    <div style="background:#f9b739;height:4px;border-radius:0 0 4px 4px;"></div>
+    <div style="background:#ffffff;border-radius:0 0 16px 16px;padding:32px;">
+      <div style="font-size:20px;font-weight:bold;color:#1c2333;">TalentriX</div>
+      <h1 style="font-size:22px;margin:24px 0 8px;color:#1c2333;">${esc(m.title)}</h1>
+      <p style="font-size:14px;line-height:1.6;color:#4b5262;margin:0 0 24px;">${esc(m.lead)}</p>
+      <div style="background:#f4f1ea;border-radius:12px;padding:24px;text-align:center;">
+        <div style="font-size:34px;font-weight:bold;letter-spacing:10px;color:#1c2333;">${esc(code)}</div>
+      </div>
+      <p style="font-size:12px;line-height:1.6;color:#8a90a0;margin:24px 0 0;">
+        If you didn't request this, you can safely ignore this email — no one else can use the code.
+      </p>
+    </div>
+  </div>
+</body></html>`;
+}
+
+async function checkOtp(user, code, purpose) {
+  const otp = user.otp || {};
+  if (otp.purpose !== purpose) {
+    return { ok: false, error: 'No active code for this step. Request a new one.' };
+  }
+  const exp = otp.expires ? new Date(otp.expires) : null;
+  if (!exp || exp.getTime() < Date.now()) {
+    return { ok: false, error: 'This code has expired. Request a new one.' };
+  }
+  if ((otp.attempts || 0) >= 5) {
+    return { ok: false, error: 'Too many failed attempts. Request a new code.' };
+  }
+  const matches = await bcrypt.compare(String(code || '').trim(), otp.hash || '');
+  if (!matches) {
+    user.otp = { ...user.otp, attempts: (otp.attempts || 0) + 1 };
+    await user.save();
+    return { ok: false, error: `Incorrect code. ${5 - user.otp.attempts} attempts left.` };
+  }
+  user.otp = { hash: '', expires: null, purpose: '', attempts: 0 };
+  await user.save();
+  return { ok: true };
+}
+
+// Find the user a code belongs to: prefer the Bearer token (registration flow
+// / dashboard), otherwise fall back to email + role from the request body.
+async function resolveOtpUser(req) {
+  const authHeader = req.headers['authorization'];
+  if (authHeader) {
+    try {
+      const payload = jwt.verify(String(authHeader).replace(/^Bearer\s+/i, ''), process.env.JWT_SECRET);
+      const u = await User.findById(payload.userId);
+      if (u) return { user: u, viaToken: true };
+    } catch {
+      // invalid token — fall through to email+role
+    }
+  }
+  const { email, role } = req.body || {};
+  if (email && role) {
+    const u = await User.findOne({ email: String(email).trim().toLowerCase(), role });
+    if (u) return { user: u, viaToken: false };
+  }
+  return null;
 }
 
 // ── Interview scheduling calendar ───────────────────────────────────────────
@@ -155,6 +307,21 @@ const userSchema = new mongoose.Schema({
   // Set once the user completes the (mandatory) admin video interview. Users
   // can only open their dashboard after this step is finished.
   interviewDone: { type: Boolean, default: false },
+
+  // Email verification & two-factor authentication. Every new account starts
+  // unverified and with 2FA switched on, so both sign-up and every login
+  // require a fresh 6-digit code sent to the account email.
+  emailVerified: { type: Boolean, default: false },
+  twoFactorEnabled: { type: Boolean, default: false },
+  // When the user accepted the Terms & Conditions during sign-up.
+  termsAcceptedAt: { type: Date, default: null },
+  // The single active OTP (bcrypt-hashed) for verification / 2FA / resets.
+  otp: {
+    hash: { type: String, default: '' },
+    expires: { type: Date, default: null },
+    purpose: { type: String, enum: ['verify', 'login', 'reset'], default: '' },
+    attempts: { type: Number, default: 0 },
+  },
 
   // Secure chat — keypair is generated and stored by the server so chat works
   // with zero setup. pubkey = SPKI base64 (shared with chat partners);
@@ -266,6 +433,9 @@ function publicUser(u) {
     active: u.active !== false,
     onboardingDone: u.onboardingDone !== false,
     interviewDone: u.interviewDone !== false,
+    emailVerified: u.emailVerified === true,
+    twoFactorEnabled: u.twoFactorEnabled === true,
+    termsAcceptedAt: u.termsAcceptedAt || null,
     hubRef: u.hubRef,
     company: u.company,
     title: u.title,
@@ -810,6 +980,11 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ message: 'Role must be hub, seeker, or employer' });
     }
 
+    // Sign-up requires explicit consent to the Terms & Conditions.
+    if (req.body.termsAccepted !== true && String(req.body.termsAccepted || '') !== 'true') {
+      return res.status(400).json({ message: 'You must accept the Terms & Conditions to create an account.' });
+    }
+
     // This email can only be used for ONE role — block if used at all
     const existing = await User.findOne({ email });
     if (existing) {
@@ -840,7 +1015,16 @@ app.post('/api/register', async (req, res) => {
       }
     }
 
-    const user = new User({ name, email, password, role, hubRef: hubCode, hubId });
+    const user = new User({
+      name,
+      email: String(email).trim().toLowerCase(),
+      password,
+      role,
+      hubRef: hubCode,
+      hubId,
+      termsAcceptedAt: new Date(),
+      twoFactorEnabled: true,
+    });
     // Employers don't need admin approval — approve them at registration so
     // they can use the dashboard immediately.
     if (role === 'employer') {
@@ -864,10 +1048,14 @@ app.post('/api/register', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // New accounts must verify their email with a code before onboarding.
+    const { sent, code } = await sendOtpEmail(user, 'verify');
+
     res.status(201).json({
       message: 'User registered successfully',
       token,
       user: publicUser(user),
+      verification: { needed: true, sent, devCode: code || undefined },
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -907,6 +1095,21 @@ app.post('/api/login', async (req, res) => {
       return res.status(403).json({ message: 'This account has been disabled. Contact an administrator.' });
     }
 
+    // Email verification + two-factor auth: require a fresh code for accounts
+    // that haven't verified yet, and for anyone with 2FA switched on. The
+    // admin operator account is exempt (it signs in through the admin panel).
+    if (user.role !== 'admin' && (user.emailVerified !== true || user.twoFactorEnabled === true)) {
+      const { sent, code } = await sendOtpEmail(user, 'login');
+      return res.status(200).json({
+        message: 'Enter the code sent to your email to continue.',
+        requiresOtp: true,
+        purpose: 'login',
+        email: maskEmail(user.email),
+        sent,
+        devCode: code || undefined,
+      });
+    }
+
     // Create JWT token
     const token = jwt.sign(
       { userId: user._id, role: user.role },
@@ -921,6 +1124,63 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify an emailed code (account activation or login 2FA). Returns a fresh
+// token for the login flow; for activation it returns the updated user — the
+// session token from registration is already in the client's hands.
+app.post('/api/verify-otp', async (req, res) => {
+  try {
+    const { code, purpose } = req.body || {};
+    if (!code || !['verify', 'login', 'reset'].includes(purpose)) {
+      return res.status(400).json({ message: 'A code and a valid purpose are required' });
+    }
+    const found = await resolveOtpUser(req);
+    if (!found) {
+      return res.status(401).json({ message: 'Session expired. Please log in again.' });
+    }
+    const { user, viaToken } = found;
+    const result = await checkOtp(user, String(code), purpose);
+    if (!result.ok) return res.status(400).json({ message: result.error });
+
+    if (user.emailVerified !== true) {
+      user.emailVerified = true;
+      await user.save();
+    }
+
+    // Login flow (or any flow without an existing session) issues a token now.
+    if (purpose === 'login' || !viaToken) {
+      const token = jwt.sign(
+        { userId: user._id, role: user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      return res.json({ ok: true, token, user: publicUser(user) });
+    }
+    return res.json({ ok: true, user: publicUser(user) });
+  } catch (error) {
+    console.error('OTP verify error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Re-issue an emailed code (wrong code, expired, or user needs another try).
+app.post('/api/resend-otp', async (req, res) => {
+  try {
+    const { purpose } = req.body || {};
+    if (!['verify', 'login', 'reset'].includes(purpose)) {
+      return res.status(400).json({ message: 'A valid purpose is required' });
+    }
+    const found = await resolveOtpUser(req);
+    if (!found) {
+      return res.status(401).json({ message: 'Session expired. Please log in again.' });
+    }
+    const { sent, code } = await sendOtpEmail(found.user, purpose);
+    res.json({ ok: true, sent, devCode: code || undefined, message: 'A new code has been sent.' });
+  } catch (error) {
+    console.error('OTP resend error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -3281,9 +3541,60 @@ app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
     const val = await getConfig(req.params.key);
+    // Mask stored secrets — the raw SMTP password and OAuth client secrets
+    // are never returned to the browser.
+    if (req.params.key === 'email') {
+      const v = val || {};
+      return res.json({
+        value: {
+          host: v.host || '',
+          port: Number(v.port || 587),
+          secure: !!v.secure,
+          user: v.user || '',
+          email: v.email || v.user || '',
+          fromName: v.fromName || '',
+          hasPassword: !!v.password,
+          password: '',
+        },
+      });
+    }
+    if (req.params.key === 'oauth') {
+      const maskKind = (k) => {
+        const c = (val && val[k]) || {};
+        return {
+          clientId: c.clientId || '',
+          hasSecret: !!c.clientSecret,
+          clientSecret: '',
+          redirectUri: c.redirectUri || '',
+        };
+      };
+      return res.json({ value: { google: maskKind('google'), microsoft: maskKind('microsoft') } });
+    }
     res.json({ value: val || {} });
   } catch (error) {
     console.error('Config get error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Send a test email through the saved platform SMTP settings.
+app.post('/api/admin/email/test', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const to = String(req.body?.to || req.user.email || '').trim();
+    if (!to) return res.status(400).json({ message: 'No destination email provided' });
+    const sent = await sendMail({
+      to,
+      subject: 'TalentriX — test email',
+      html: `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1c2333;background:#f4f1ea;padding:32px;">
+        <h2>Email delivery is working</h2>
+        <p>This is a test email sent from the TalentriX admin panel using your saved SMTP settings.</p>
+        <p style="color:#8a90a0;">Sent ${new Date().toLocaleString()}</p>
+      </body></html>`,
+    });
+    res.json({ ok: sent, message: sent ? `Test email sent to ${to}.` : 'Could not send — check your SMTP details and try again.' });
+  } catch (error) {
+    console.error('Email test error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -3298,6 +3609,45 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
       const existing = (await getConfig('ai')) || {};
       if (req.body.clearKey === true) value.apiKey = '';
       else if (!value.apiKey && existing.apiKey) value.apiKey = existing.apiKey;
+    }
+    // Platform email (SMTP): preserve untouched fields, keep the existing
+    // password when a blank one arrives, encrypt new ones at rest.
+    if (req.params.key === 'email') {
+      const existing = (await getConfig('email')) || {};
+      const v = { ...existing, ...value, email: undefined };
+      v.host = String(v.host || '').trim();
+      v.port = Number(v.port == null ? 587 : v.port);
+      v.secure = !!v.secure;
+      v.user = String(v.user || '').trim();
+      v.fromName = String(v.fromName || '').trim();
+      if (req.body.clearPassword === true) v.password = '';
+      else if (String(value.password || '').trim()) v.password = encryptSecret(String(value.password).trim());
+      else if (!v.password) v.password = existing.password || '';
+      value = v;
+    }
+    // OAuth apps used by talents when connecting their mailbox. Secrets are
+    // kept as-is (the token exchange needs the raw value) but are masked on
+    // reads and preserved when a blank one arrives.
+    if (req.params.key === 'oauth') {
+      const existing = (await getConfig('oauth')) || {};
+      const mergeKind = (k) => {
+        const cur = existing[k] || {};
+        const next = value[k] || {};
+        const wasTouched = value[k] != null;
+        // A blank secret keeps the stored one; an explicit clearSecret=true wipes it.
+        const secret =
+          wasTouched && next.clearSecret === true
+            ? ''
+            : wasTouched && next.clientSecret != null && String(next.clientSecret).trim() !== ''
+            ? String(next.clientSecret).trim()
+            : cur.clientSecret || '';
+        return {
+          clientId: String(wasTouched && next.clientId != null ? next.clientId : (cur.clientId || '')).trim(),
+          clientSecret: secret,
+          redirectUri: String(wasTouched && next.redirectUri != null ? next.redirectUri : (cur.redirectUri || '')).trim(),
+        };
+      };
+      value = { google: mergeKind('google'), microsoft: mergeKind('microsoft') };
     }
     await setConfig(req.params.key, value);
     res.json({ message: 'Config saved' });
@@ -4550,7 +4900,7 @@ function buildUserTransporter(conn) {
         type: 'OAuth2',
         user: conn.user || conn.email,
         clientId: oauth.clientId || '',
-        clientSecret: oauth.clientSecret || '',
+        clientSecret: oauth.clientSecret ? decryptSecret(String(oauth.clientSecret)) : '',
         refreshToken: oauth.refreshToken || '',
         accessToken: oauth.accessToken || '',
         expires: oauth.accessTokenExpires ? +oauth.accessTokenExpires : undefined,

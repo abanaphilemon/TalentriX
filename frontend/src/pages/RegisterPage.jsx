@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import {
   User,
@@ -12,19 +12,22 @@ import {
   CheckCircle2,
   Network,
   Loader2,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import OtpEntry from '../components/OtpEntry.jsx';
 
 export default function RegisterPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { user, selectRole, registerWithEmail, signOut } = useAuth();
+  const { user, role, selectRole, registerWithEmail, signOut } = useAuth();
 
   const ref = searchParams.get('ref') || '';
   const [showPw, setShowPw] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [verify, setVerify] = useState(null); // { email, devCode } while the code step is open
 
   const {
     register,
@@ -44,9 +47,17 @@ export default function RegisterPage() {
       setSubmitError('Passwords do not match.');
       return;
     }
-    const res = await registerWithEmail({ ...data, hubRef: ref });
+    if (!data.terms) {
+      setSubmitError('Please accept the Terms & Conditions to continue.');
+      return;
+    }
+    const res = await registerWithEmail({ ...data, hubRef: ref, termsAccepted: !!data.terms });
     if (!res.ok) {
       setSubmitError(res.error);
+      return;
+    }
+    if (res.verification?.needed) {
+      setVerify({ email: data.email, devCode: res.verification.devCode });
       return;
     }
     setSuccess(true);
@@ -60,6 +71,29 @@ export default function RegisterPage() {
         ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-200'
         : 'border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30'
     }`;
+
+  if (verify) {
+    return (
+      <AuthShell>
+        <OtpEntry
+          purpose="verify"
+          email={verify.email}
+          devCode={verify.devCode}
+          role={role}
+          onSuccess={() => {
+            setSuccess(true);
+            const isEmployer = role === 'employer';
+            setTimeout(() => navigate(isEmployer ? '/dashboard/employer' : '/onboarding', { replace: true }), 800);
+          }}
+          onBack={() => {
+            signOut();
+            setVerify(null);
+            setSubmitError('Email not verified. You can log in again to receive a fresh code.');
+          }}
+        />
+      </AuthShell>
+    );
+  }
 
   if (success) {
     return (
@@ -157,6 +191,22 @@ export default function RegisterPage() {
             {...register('confirmPassword', { required: 'Please confirm your password' })}
           />
         </FieldError>
+
+        <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5 w-4 h-4 accent-primary"
+            {...register('terms', { required: 'Please accept the Terms & Conditions' })}
+          />
+          <span className="text-xs text-secondary/60 leading-relaxed">
+            I have read and agree to the{' '}
+            <Link to="/terms" className="underline font-semibold text-secondary hover:text-primary">
+              Terms &amp; Conditions
+            </Link>
+            {' '}and verifiable identity policy.
+          </span>
+        </label>
+        {errors.terms && <p className="text-xs text-red-600 -mt-1">{errors.terms.message}</p>}
 
         {submitError && (
           <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm">
