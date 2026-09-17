@@ -2,19 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { ShieldCheck, RefreshCw, Loader2, Mail, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 
+const DELIVERY_MSG =
+  "We couldn't email the 6-digit code — the platform email service isn't configured. Ask the site administrator to check the SMTP settings.";
+
 // 6-digit code entry shared by the sign-up and login flows.
-export default function OtpEntry({ purpose, email, devCode, role, onSuccess, onBack, title, subtitle }) {
+export default function OtpEntry({ purpose, email, sentOnOpen, role, onSuccess, onBack, title, subtitle }) {
   const { verifyOtp, resendOtp } = useAuth();
   const [digits, setDigits] = useState(Array(6).fill(''));
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() =>
+    sentOnOpen === false ? DELIVERY_MSG : ''
+  );
   const [info, setInfo] = useState('');
   const [cooldown, setCooldown] = useState(0);
   const inputs = useRef([]);
-
-  useEffect(() => {
-    if (devCode) setInfo(`Email delivery isn't configured — use dev code ${devCode}.`);
-  }, [devCode]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -80,7 +81,7 @@ export default function OtpEntry({ purpose, email, devCode, role, onSuccess, onB
     }
     setDigits(Array(6).fill(''));
     setCooldown(60);
-    setInfo(res.devCode ? `Email delivery isn't configured — use dev code ${res.devCode}.` : 'A new code has been sent.');
+    setInfo(res.sent ? 'A new code has been sent to your email.' : DELIVERY_MSG);
     inputs.current[0]?.focus();
   };
 

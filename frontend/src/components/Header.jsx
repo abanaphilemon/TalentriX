@@ -34,7 +34,7 @@ const LogoMark = ({ branding }) => {
 };
 
 // User pill — replaces the "Get Started" button when signed in
-const UserPill = ({ user, roleLabel, onSignOut, onOpenAuth }) => {
+const UserPill = ({ user, roleLabel, onSignOut }) => {
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Choose avatar source: Google photo OR initials fallback
@@ -78,15 +78,6 @@ const UserPill = ({ user, roleLabel, onSignOut, onOpenAuth }) => {
                 </span>
               )}
             </div>
-            <button
-              onClick={() => {
-                setMenuOpen(false);
-                onOpenAuth();
-              }}
-              className="w-full mt-1 flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-secondary hover:bg-primary/20 transition-colors"
-            >
-              Switch role
-            </button>
             <button
               onClick={() => {
                 setMenuOpen(false);
@@ -170,7 +161,6 @@ export default function Header() {
                 user={user}
                 roleLabel={roleLabel}
                 onSignOut={signOut}
-                onOpenAuth={openAuth}
               />
             ) : (
               <button
@@ -238,16 +228,6 @@ export default function Header() {
                         )}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        openAuth();
-                        setOpen(false);
-                      }}
-                      className="px-4 py-3 rounded-lg text-secondary font-medium hover:bg-primary/20 transition-colors text-center"
-                    >
-                      Switch role
-                    </button>
                     <button
                       type="button"
                       onClick={() => {

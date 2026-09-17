@@ -139,7 +139,7 @@ export default function AuthPage() {
 
   const [tab, setTab] = useState('login');    // 'login' | 'register'
   const [submitError, setSubmitError] = useState('');
-  const [otp, setOtp] = useState(null);        // { purpose, email, devCode, role } while the code step is open
+  const [otp, setOtp] = useState(null);        // { purpose, email, sent, role } while the code step is open
 
   const { content } = useContent();
   const brandName = content.branding?.name || 'TalentriX';
@@ -167,7 +167,7 @@ export default function AuthPage() {
     setSubmitError('');
     const res = await loginWithEmail(data);
     if (!res.ok) setSubmitError(res.error);
-    else if (res.requiresOtp) setOtp({ purpose: res.purpose || 'login', email: data.email, devCode: res.devCode, role });
+    else if (res.requiresOtp) setOtp({ purpose: res.purpose || 'login', email: data.email, sent: res.sent, role });
   };
 
   const onSubmitRegister = async (data) => {
@@ -183,7 +183,7 @@ export default function AuthPage() {
     const res = await registerWithEmail({ ...data, termsAccepted: !!data.terms });
     if (!res.ok) setSubmitError(res.error);
     else if (res.verification?.needed) {
-      setOtp({ purpose: 'verify', email: data.email, devCode: res.verification.devCode, role });
+      setOtp({ purpose: 'verify', email: data.email, sent: res.verification.sent, role });
     }
   };
 
@@ -332,7 +332,7 @@ export default function AuthPage() {
                   <OtpEntry
                     purpose={otp.purpose}
                     email={otp.email}
-                    devCode={otp.devCode}
+                    sentOnOpen={otp.sent}
                     role={otp.role || role}
                     onSuccess={closeAuth}
                     onBack={() => setOtp(null)}

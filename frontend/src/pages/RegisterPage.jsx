@@ -27,7 +27,7 @@ export default function RegisterPage() {
   const [showPw, setShowPw] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success, setSuccess] = useState(false);
-  const [verify, setVerify] = useState(null); // { email, devCode } while the code step is open
+  const [verify, setVerify] = useState(null); // { email, sent } while the code step is open
 
   const {
     register,
@@ -57,7 +57,7 @@ export default function RegisterPage() {
       return;
     }
     if (res.verification?.needed) {
-      setVerify({ email: data.email, devCode: res.verification.devCode });
+      setVerify({ email: data.email, sent: res.verification.sent });
       return;
     }
     setSuccess(true);
@@ -78,7 +78,7 @@ export default function RegisterPage() {
         <OtpEntry
           purpose="verify"
           email={verify.email}
-          devCode={verify.devCode}
+          sentOnOpen={verify.sent}
           role={role}
           onSuccess={() => {
             setSuccess(true);

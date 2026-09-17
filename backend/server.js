@@ -67,20 +67,22 @@ async function platformMailConfig() {
   return null;
 }
 
-async function sendMail({ to, subject, html }) {
-  if (!to) return false;
+async function sendMail({ to, subject, html, debug } = {}) {
+  if (!to) return debug ? { ok: false, error: 'No recipient given' } : false;
   try {
     const conf = await platformMailConfig();
     if (!conf) {
       console.log(`[email:skipped] 🕮 to=${to} subject="${subject}"`);
-      return false;
+      return debug
+        ? { ok: false, error: 'No SMTP email configured — enter host, sender and password above (or set the SMTP env vars).' }
+        : false;
     }
     await conf.transport.sendMail({ from: `"${conf.name}" <${conf.addr}>`, to, subject, html });
     console.log(`[email:sent] to=${to} subject="${subject}"`);
-    return true;
+    return debug ? { ok: true } : true;
   } catch (error) {
     console.error('[email:error]', error.message);
-    return false;
+    return debug ? { ok: false, error: error.message } : false;
   }
 }
 
@@ -114,9 +116,9 @@ async function sendOtpEmail(user, purpose) {
   const subject = isLogin ? 'Your TalentriX login code' : 'Verify your TalentriX account';
   const html = otpEmailHtml(code, purpose);
   const sent = await sendMail({ to: user.email, subject, html });
-  // When delivery isn't configured the code is returned so development still
-  // works; when mail is working the code is only ever delivered by email.
-  return { sent, code: sent ? '' : code };
+  // The code is only ever delivered to the account's email — it's never
+  // returned to the client so the app can't leak it to the browser.
+  return { sent };
 }
 
 const OTP_LOGIN_MSGS = {
@@ -1049,13 +1051,13 @@ app.post('/api/register', async (req, res) => {
     );
 
     // New accounts must verify their email with a code before onboarding.
-    const { sent, code } = await sendOtpEmail(user, 'verify');
+    const { sent } = await sendOtpEmail(user, 'verify');
 
     res.status(201).json({
       message: 'User registered successfully',
       token,
       user: publicUser(user),
-      verification: { needed: true, sent, devCode: code || undefined },
+      verification: { needed: true, sent },
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -1099,14 +1101,13 @@ app.post('/api/login', async (req, res) => {
     // that haven't verified yet, and for anyone with 2FA switched on. The
     // admin operator account is exempt (it signs in through the admin panel).
     if (user.role !== 'admin' && (user.emailVerified !== true || user.twoFactorEnabled === true)) {
-      const { sent, code } = await sendOtpEmail(user, 'login');
+      const { sent } = await sendOtpEmail(user, 'login');
       return res.status(200).json({
         message: 'Enter the code sent to your email to continue.',
         requiresOtp: true,
         purpose: 'login',
         email: maskEmail(user.email),
         sent,
-        devCode: code || undefined,
       });
     }
 
@@ -1177,8 +1178,8 @@ app.post('/api/resend-otp', async (req, res) => {
     if (!found) {
       return res.status(401).json({ message: 'Session expired. Please log in again.' });
     }
-    const { sent, code } = await sendOtpEmail(found.user, purpose);
-    res.json({ ok: true, sent, devCode: code || undefined, message: 'A new code has been sent.' });
+    const { sent } = await sendOtpEmail(found.user, purpose);
+    res.json({ ok: true, sent, message: 'A new code has been sent.' });
   } catch (error) {
     console.error('OTP resend error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -3583,7 +3584,7 @@ app.post('/api/admin/email/test', authenticateToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
     const to = String(req.body?.to || req.user.email || '').trim();
     if (!to) return res.status(400).json({ message: 'No destination email provided' });
-    const sent = await sendMail({
+    const result = await sendMail({
       to,
       subject: 'TalentriX — test email',
       html: `<!doctype html><html><body style="font-family:Arial,sans-serif;color:#1c2333;background:#f4f1ea;padding:32px;">
@@ -3591,8 +3592,14 @@ app.post('/api/admin/email/test', authenticateToken, async (req, res) => {
         <p>This is a test email sent from the TalentriX admin panel using your saved SMTP settings.</p>
         <p style="color:#8a90a0;">Sent ${new Date().toLocaleString()}</p>
       </body></html>`,
+      debug: true,
     });
-    res.json({ ok: sent, message: sent ? `Test email sent to ${to}.` : 'Could not send — check your SMTP details and try again.' });
+    res.json({
+      ok: result.ok,
+      message: result.ok
+        ? `Test email sent to ${to}.`
+        : `Could not send: ${result.error || 'check your SMTP details and try again.'}`,
+    });
   } catch (error) {
     console.error('Email test error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -3614,11 +3621,15 @@ app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
     // password when a blank one arrives, encrypt new ones at rest.
     if (req.params.key === 'email') {
       const existing = (await getConfig('email')) || {};
-      const v = { ...existing, ...value, email: undefined };
+      // Normalise to `email` + `user` (same value). The admin UI sends the
+      // sender address as `email`, but config reads historically used `user` —
+      // keep both in sync so either one always resolves to the SMTP login.
+      const v = { ...existing, ...value };
       v.host = String(v.host || '').trim();
       v.port = Number(v.port == null ? 587 : v.port);
       v.secure = !!v.secure;
-      v.user = String(v.user || '').trim();
+      v.email = String(v.email || v.user || '').trim();
+      v.user = v.email;
       v.fromName = String(v.fromName || '').trim();
       if (req.body.clearPassword === true) v.password = '';
       else if (String(value.password || '').trim()) v.password = encryptSecret(String(value.password).trim());

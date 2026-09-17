@@ -159,7 +159,7 @@ export function AuthProvider({ children }) {
           requiresOtp: true,
           purpose: data.purpose || 'login',
           email: data.email,
-          devCode: data.devCode,
+          sent: data.sent,
         };
       }
 
@@ -232,7 +232,7 @@ export function AuthProvider({ children }) {
       if (!res.ok) {
         return { ok: false, error: data.message || 'Could not resend the code' };
       }
-      return { ok: true, sent: data.sent, devCode: data.devCode };
+      return { ok: true, sent: data.sent };
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
     }
