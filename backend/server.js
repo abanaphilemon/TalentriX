@@ -319,7 +319,7 @@ const userSchema = new mongoose.Schema({
   otp: {
     hash: { type: String, default: '' },
     expires: { type: Date, default: null },
-    purpose: { type: String, enum: ['verify', 'login', 'reset'], default: '' },
+    purpose: { type: String, enum: ['', 'verify', 'login', 'reset'], default: '' },
     attempts: { type: Number, default: 0 },
   },
 
