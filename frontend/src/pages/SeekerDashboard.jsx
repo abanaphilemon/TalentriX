@@ -32,12 +32,14 @@ import {
   Lightbulb,
   MessageSquare,
   Headset,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import NotificationCenter from '../components/NotificationCenter.jsx';
 import SupportCenter from '../components/SupportCenter.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
+import AiApplyModal from '../components/AiApplyModal.jsx';
 import { ensureKeys } from '../lib/e2e.js';
 import { readImageFile } from '../lib/image.js';
 
@@ -324,6 +326,9 @@ export default function SeekerDashboard() {
   const [sourceFilter, setSourceFilter] = useState('All');
   const [applied, setApplied] = useState(() => new Set());
   const [selectedJob, setSelectedJob] = useState(null);
+  const [applyJob, setApplyJob] = useState(null);
+  const [applications, setApplications] = useState([]);
+  const [applicationsLoading, setApplicationsLoading] = useState(false);
 
   // Settings form
   const [form, setForm] = useState({});
@@ -435,8 +440,32 @@ export default function SeekerDashboard() {
     }
   };
 
+  const loadApplications = async () => {
+    setApplicationsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/applications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const list = d.applications || [];
+        setApplications(list);
+        const sent = new Set();
+        list.forEach((a) => {
+          if (a.jobId && (a.status === 'sent' || a.status === 'draft')) sent.add(a.jobId);
+        });
+        setApplied(sent);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setApplicationsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadProfile();
+    loadApplications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -686,6 +715,7 @@ export default function SeekerDashboard() {
         <div className="flex gap-2 mb-6 bg-secondary/5 p-1 rounded-xl w-fit flex-wrap">
           {[
             { id: 'jobs', label: 'Jobs', icon: Briefcase },
+            { id: 'applications', label: 'My Applications', icon: FileText },
             { id: 'profile', label: 'My Profile', icon: User },
             { id: 'settings', label: 'Settings', icon: SettingsIcon },
           ].map((t) => (
@@ -829,11 +859,98 @@ export default function SeekerDashboard() {
                             </div>
                           )}
 
-                          <div className="mt-auto flex items-center justify-end pt-2">
+                          <div className="mt-auto flex items-center justify-end gap-3 pt-2">
+                            {applied.has(j._id || j.id) ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-600">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Applied
+                              </span>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setApplyJob(j);
+                                }}
+                                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold text-white bg-secondary hover:bg-accent transition-colors"
+                              >
+                                <Sparkles className="w-3.5 h-3.5" /> Apply with AI
+                              </button>
+                            )}
                             <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:text-accent transition-colors">
                               View Details <ExternalLink className="w-3 h-3" />
                             </span>
                           </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'applications' && (
+              <div>
+                {applicationsLoading ? (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  </div>
+                ) : applications.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">
+                    <FileText className="w-8 h-8 text-primary mx-auto mb-3" />
+                    <p className="font-display font-bold text-secondary">No applications yet</p>
+                    <p className="text-sm text-secondary/60 mt-1">Click “Apply with AI” on any job to auto-draft and send an application.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {applications.map((a) => {
+                      const statusMeta =
+                        a.status === 'sent'
+                          ? { bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', label: 'Sent via email' }
+                          : a.status === 'failed'
+                          ? { bg: 'bg-red-50 text-red-700 border-red-200', label: 'Failed' }
+                          : { bg: 'bg-amber-50 text-amber-700 border-amber-200', label: 'Draft — finish manually' };
+                      return (
+                        <div key={String(a.id)} className="bg-white rounded-2xl border border-secondary/10 p-6">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-display font-bold text-secondary">{a.jobTitle || 'Job'}</h3>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold border ${statusMeta.bg}`}>
+                                  {statusMeta.label}
+                                </span>
+                              </div>
+                              <p className="text-xs text-secondary/60 mt-0.5">
+                                {[a.company, a.source, a.sentAt || a.createdAt ? new Date(a.sentAt || a.createdAt).toLocaleDateString() : '']
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {a.url && (
+                                <a
+                                  href={a.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 px-3 py-2 rounded-lg transition-colors"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" /> Original
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          {a.toEmail && a.status === 'sent' && (
+                            <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-secondary/60">
+                              <Mail className="w-3.5 h-3.5 text-primary" /> Sent to {a.toEmail}
+                            </p>
+                          )}
+                          {a.coverLetter && (
+                            <div className="mt-4 p-4 rounded-xl bg-secondary/[0.03] border border-secondary/10">
+                              <div className="text-[10px] font-bold uppercase tracking-widest text-secondary/40 mb-1.5">{a.subject || 'Cover letter'}</div>
+                              <p className="text-sm text-secondary/70 leading-relaxed whitespace-pre-line line-clamp-3">{a.coverLetter}</p>
+                            </div>
+                          )}
+                          {a.error && (
+                            <p className="mt-3 text-xs text-red-600">{a.error}</p>
+                          )}
                         </div>
                       );
                     })}
@@ -1571,25 +1688,41 @@ export default function SeekerDashboard() {
                   </a>
                 )}
                 <button
+                  disabled={applied.has(selectedJob._id || selectedJob.id)}
                   onClick={() => {
-                    if (selectedJob.url) {
-                      window.open(selectedJob.url, '_blank', 'noopener');
-                    }
-                    setApplied((prev) => new Set(prev).add(selectedJob._id || selectedJob.id));
-                    setSelectedJob(null);
+                    setApplyJob(selectedJob);
                   }}
-                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-semibold text-white bg-secondary hover:bg-accent transition-colors"
+                  className={`inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                    applied.has(selectedJob._id || selectedJob.id)
+                      ? 'bg-emerald-50 text-emerald-700 cursor-default border border-emerald-200'
+                      : 'text-white bg-secondary hover:bg-accent'
+                  }`}
                 >
                   {applied.has(selectedJob._id || selectedJob.id) ? (
-                    <><CheckCircle2 className="w-4 h-4" /> Applied</>
+                    <><CheckCircle2 className="w-4 h-4" /> Applied with AI</>
                   ) : (
-                    <><ExternalLink className="w-4 h-4" /> Apply Now</>
+                    <><Sparkles className="w-4 h-4" /> Apply with AI</>
                   )}
                 </button>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* AI auto-apply modal */}
+      {applyJob && (
+        <AiApplyModal
+          job={applyJob}
+          token={token}
+          onClose={() => setApplyJob(null)}
+          onApplied={(app) => {
+            if (app?.jobId) {
+              setApplied((prev) => new Set(prev).add(app.jobId));
+              setApplications((prev) => [app, ...prev]);
+            }
+          }}
+        />
       )}
 
       <SupportCenter token={token} userRole="seeker" open={supportOpen} onClose={() => setSupportOpen(false)} />

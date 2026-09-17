@@ -1841,6 +1841,44 @@ const SiteConfig = mongoose.model('SiteConfig', new mongoose.Schema({
   value: { type: mongoose.Schema.Types.Mixed, default: {} },
 }));
 
+// A job seeker's connected email inbox (Gmail / Outlook / any SMTP account).
+// The app password is encrypted at rest with AES-256-GCM (see ai-auto-apply
+// helpers) so the raw credential never touches the database or API responses.
+const EmailConnection = mongoose.model('EmailConnection', new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  provider: { type: String, enum: ['gmail', 'outlook', 'smtp'], default: 'smtp' },
+  email: { type: String, required: true },
+  displayName: { type: String, default: '' },
+  host: { type: String, default: '' },
+  port: { type: Number, default: 465 },
+  secure: { type: Boolean, default: true },
+  user: { type: String, default: '' },
+  secret: { type: String, default: '' },
+  verifiedAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// AI-assisted job applications created when a seeker clicks "Apply with AI".
+// method 'email' = the cover letter + CV were emailed from the seeker's own
+// inbox; 'draft' = no destination address was known, the prepared application
+// is recorded and handed to the seeker to finish on the original posting.
+const Application = mongoose.model('Application', new mongoose.Schema({
+  seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  jobId: { type: String, default: '' },
+  jobTitle: { type: String, default: '' },
+  company: { type: String, default: '' },
+  source: { type: String, default: 'Platform' },
+  url: { type: String, default: '' },
+  toEmail: { type: String, default: '' },
+  subject: { type: String, default: '' },
+  coverLetter: { type: String, default: '' },
+  method: { type: String, enum: ['email', 'draft'], default: 'email' },
+  status: { type: String, enum: ['draft', 'sent', 'failed'], default: 'draft' },
+  error: { type: String, default: '' },
+  sentAt: { type: Date },
+  createdAt: { type: Date, default: Date.now },
+}));
+
 // Tracks which employer has paid to chat with which seeker.
 const ChatPayment = mongoose.model('ChatPayment', new mongoose.Schema({
   employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -3205,7 +3243,15 @@ app.get('/api/admin/config/:key', authenticateToken, async (req, res) => {
 app.put('/api/admin/config/:key', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
-    await setConfig(req.params.key, req.body.value || {});
+    let value = req.body.value || {};
+    // For the AI key the admin UI sends a blank apiKey when it is unchanged
+    // (the stored key is only ever shown masked). Keep the existing key then.
+    if (req.params.key === 'ai') {
+      const existing = (await getConfig('ai')) || {};
+      if (req.body.clearKey === true) value.apiKey = '';
+      else if (!value.apiKey && existing.apiKey) value.apiKey = existing.apiKey;
+    }
+    await setConfig(req.params.key, value);
     res.json({ message: 'Config saved' });
   } catch (error) {
     console.error('Config set error:', error);
@@ -3934,6 +3980,570 @@ app.delete('/api/admin/talent-reviews/:id', authenticateToken, async (req, res) 
   } catch (error) {
     console.error('Admin review delete error:', error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── AI Auto-Apply ───────────────────────────────────────────────────────────
+// The admin stores an AI provider + API key + chosen model in SiteConfig
+// ('ai'). Seekers connect their Gmail/Outlook account once; when they hit
+// "Apply with AI" the platform drafts a personalised cover letter from their
+// profile + CV and emails it (with the CV attached) from their own inbox.
+
+const nodeCrypto = require('crypto');
+
+// Encrypt/decrypt app passwords stored on EmailConnection documents.
+function aiSecretKey() {
+  return nodeCrypto.createHash('sha256').update(process.env.JWT_SECRET || 'talentrix-dev-secret').digest();
+}
+function encryptSecret(plain) {
+  const iv = nodeCrypto.randomBytes(12);
+  const cipher = nodeCrypto.createCipheriv('aes-256-gcm', aiSecretKey(), iv);
+  const enc = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  return JSON.stringify({
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ct: enc.toString('base64'),
+  });
+}
+function decryptSecret(payload) {
+  if (!payload) return '';
+  try {
+    const { iv, tag, ct } = JSON.parse(payload);
+    const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', aiSecretKey(), Buffer.from(iv, 'base64'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    return Buffer.concat([decipher.update(Buffer.from(ct, 'base64')), decipher.final()]).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+// Known LLM providers. OpenAI/Anthropic/Gemini use their native APIs; Groq,
+// OpenRouter, Together and any "custom" base URL speak the OpenAI-compatible
+// chat completions protocol, so they share one code path.
+const AI_PROVIDERS = {
+  openai:     { label: 'OpenAI',              kind: 'openai',    base: 'https://api.openai.com/v1' },
+  gemini:     { label: 'Google Gemini',       kind: 'gemini',    base: 'https://generativelanguage.googleapis.com/v1beta' },
+  anthropic:  { label: 'Anthropic',           kind: 'anthropic', base: 'https://api.anthropic.com' },
+  groq:       { label: 'Groq',                kind: 'openai',    base: 'https://api.groq.com/openai/v1' },
+  openrouter: { label: 'OpenRouter',          kind: 'openai',    base: 'https://openrouter.ai/api/v1' },
+  together:   { label: 'Together AI',         kind: 'openai',    base: 'https://api.together.xyz/v1' },
+  custom:     { label: 'Custom (OpenAI-compatible)', kind: 'openai', base: '' },
+};
+
+async function aiApiError(res) {
+  let msg = `AI request failed (${res.status})`;
+  try {
+    const d = await res.json();
+    if (d.error?.message) msg = d.error.message;
+    else if (d.error) msg = String(d.error);
+  } catch { /* keep default */ }
+  return new Error(msg);
+}
+
+// Live model listing — used by the admin (after entering a key) so they can
+// pick which model the auto-apply AI uses.
+async function listAiModels({ provider, apiKey, baseUrl }) {
+  const p = AI_PROVIDERS[provider] || AI_PROVIDERS.openai;
+  const base = (provider === 'custom' ? baseUrl : p.base || '').replace(/\/$/, '');
+  if (!base || !apiKey) return [];
+
+  if (p.kind === 'anthropic') {
+    const res = await fetch(`${base}/v1/models`, {
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!res.ok) throw await aiApiError(res);
+    const d = await res.json();
+    return (d.data || []).map((m) => ({ id: m.id, label: m.display_name || m.id })).filter((m) => m.id);
+  }
+
+  if (p.kind === 'gemini') {
+    const res = await fetch(`${base}/models?key=${encodeURIComponent(apiKey)}`, {
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!res.ok) throw await aiApiError(res);
+    const d = await res.json();
+    return (d.models || [])
+      .map((m) => ({ id: String(m.name || '').replace(/^models\//, ''), label: m.displayName || String(m.name || '').replace(/^models\//, '') }))
+      .filter((m) => m.id && !/generateContent$/.test(m.id));
+  }
+
+  const res = await fetch(`${base}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(25000),
+  });
+  if (!res.ok) throw await aiApiError(res);
+  const d = await res.json();
+  return (d.data || []).map((m) => ({ id: m.id, label: m.id })).filter((m) => m.id);
+}
+
+// One chat completion round-trip against the configured provider/model.
+async function aiChat(cfg, { system, user, max = 900 }) {
+  const p = AI_PROVIDERS[cfg.provider] || AI_PROVIDERS.openai;
+  const base = (cfg.provider === 'custom' ? cfg.baseUrl : p.base || '').replace(/\/$/, '');
+  const model = cfg.model;
+  if (!model) throw new Error('No AI model selected yet.');
+  if (!cfg.apiKey) throw new Error('AI is not configured yet.');
+
+  if (p.kind === 'anthropic') {
+    const res = await fetch(`${base}/v1/messages`, {
+      method: 'POST',
+      headers: { 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, max_tokens: max, system, messages: [{ role: 'user', content: user }] }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!res.ok) throw await aiApiError(res);
+    const d = await res.json();
+    return (d.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+  }
+
+  if (p.kind === 'gemini') {
+    const res = await fetch(`${base}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: [{ role: 'user', parts: [{ text: user }] }],
+        generationConfig: { maxOutputTokens: max, temperature: 0.7 },
+      }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!res.ok) throw await aiApiError(res);
+    const d = await res.json();
+    return (d.candidates?.[0]?.content?.parts || []).map((pt) => pt.text || '').join('\n').trim();
+  }
+
+  const res = await fetch(`${base}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      max_tokens: max,
+      temperature: 0.7,
+    }),
+    signal: AbortSignal.timeout(90000),
+  });
+  if (!res.ok) throw await aiApiError(res);
+  const d = await res.json();
+  return (d.choices?.[0]?.message?.content || '').trim();
+}
+
+function maskKey(key) {
+  const s = String(key || '');
+  if (s.length <= 8) return '••••••••';
+  return s.slice(0, 4) + '••••••' + s.slice(-4);
+}
+
+// Parse a `data:<mime>;base64,<payload>` string (CVs are stored like this).
+function decodeDataUrl(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
+  const m = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+  if (!m) return null;
+  return { mime: (m[1] || 'application/octet-stream').toLowerCase(), base64: m[3] };
+}
+
+// If the uploaded CV is plain text we can also feed its contents to the AI so
+// the cover letter reflects the full CV, not just the structured profile.
+function cvToPlainText(cv) {
+  const d = decodeDataUrl(cv);
+  if (!d) return '';
+  if (d.mime.startsWith('text/') || d.mime.includes('json')) {
+    try {
+      return Buffer.from(d.base64, 'base64').toString('utf8').slice(0, 6000);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function profileContext(user) {
+  const lines = [];
+  lines.push(`Name: ${user.name || ''}`);
+  if (user.title) lines.push(`Headline: ${user.title}`);
+  if (user.summary) lines.push(`Summary: ${user.summary}`);
+  if ((user.skills || []).filter(Boolean).length) lines.push(`Skills: ${user.skills.filter(Boolean).join(', ')}`);
+  if ((user.languages || []).filter(Boolean).length) lines.push(`Languages: ${user.languages.filter(Boolean).join(', ')}`);
+  const exp = (user.experience || []).slice(0, 4)
+    .map((e) => `${e.title || ''} — ${e.company || ''} (${e.start || ''}${e.end ? ' – ' + e.end : ''})${e.description ? ': ' + e.description : ''}`)
+    .filter(Boolean).join('\n');
+  if (exp) lines.push(`Experience:\n${exp}`);
+  const edu = (user.education || []).slice(0, 3)
+    .map((e) => `${e.school || ''}, ${e.degree || ''}${e.field ? ' — ' + e.field : ''}`)
+    .filter(Boolean).join('\n');
+  if (edu) lines.push(`Education:\n${edu}`);
+  const prj = (user.projects || []).slice(0, 3)
+    .map((p) => `${p.name || ''}${p.description ? ': ' + p.description : ''}`)
+    .filter(Boolean).join('\n');
+  if (prj) lines.push(`Projects:\n${prj}`);
+  if (user.github) lines.push(`GitHub: ${user.github}`);
+  if (user.website) lines.push(`Website: ${user.website}`);
+  if (user.linkedin) lines.push(`LinkedIn: ${user.linkedin}`);
+  return lines.join('\n');
+}
+
+function discoverApplyEmail(job) {
+  const direct = job.email || job.applyEmail || job.contactEmail;
+  if (direct && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(direct))) return String(direct).trim();
+  const hay = `${job.description || ''} ${job.company || ''}`;
+  const found = (hay.match(/[\w.+-]+@[\w-]+\.[\w.]+/g) || [])
+    .map((s) => s.replace(/[.,;:!?)]$/, ''))
+    .find((s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  return found || '';
+}
+
+// Mailbox presets so connecting Gmail/Outlook requires only an app password.
+function emailPresetFor(address, provider) {
+  const domain = String(address || '').split('@')[1]?.toLowerCase() || '';
+  if (provider === 'gmail' || domain.includes('gmail') || domain.includes('googlemail')) {
+    return { provider: 'gmail', host: 'smtp.gmail.com', port: 465, secure: true };
+  }
+  if (provider === 'outlook' || /(outlook|hotmail|live|msn|office365|microsoft)/.test(domain)) {
+    return { provider: 'outlook', host: 'smtp.office365.com', port: 587, secure: false };
+  }
+  return { provider: 'smtp', host: '', port: 587, secure: false };
+}
+
+function buildUserTransporter(conn) {
+  return nodemailer.createTransport({
+    host: conn.host,
+    port: Number(conn.port || 465),
+    secure: !!conn.secure,
+    auth: { user: conn.user || conn.email, pass: decryptSecret(conn.secret) },
+  });
+}
+
+function cvAttachment(user) {
+  const d = decodeDataUrl(user.cv);
+  if (!d) return undefined;
+  const ext = {
+    'application/pdf': 'pdf',
+    'application/msword': 'doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+    'application/rtf': 'rtf',
+    'text/plain': 'txt',
+    'text/markdown': 'md',
+  }[d.mime] || 'bin';
+  return {
+    filename: `${(user.name || 'candidate').replace(/[^\w-]+/g, '_')}-CV.${ext}`,
+    content: Buffer.from(d.base64, 'base64'),
+    contentType: d.mime,
+  };
+}
+
+function coverLetterToHtml(text, user) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paras = String(text).split(/\n{2,}/).map((p) => p.replace(/\n/g, ' ').trim()).filter(Boolean);
+  const body = paras.map((p) => `<p style="margin:0 0 14px;line-height:1.6">${esc(p)}</p>`).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.6">${body}<p style="margin:0">${esc(user.name || 'Candidate')}</p></div>`;
+}
+
+async function generateApplication(user, job, cvText) {
+  const cfg = await getConfig('ai');
+  if (!cfg?.apiKey) throw new Error('AI is not configured yet — ask the admin to add an API key.');
+  if (!cfg?.model) throw new Error('No AI model selected yet — ask the admin to pick a model.');
+  const ctx = profileContext(user) + (cvText ? `\n\nCV (extracted text):\n${cvText}` : '');
+  const jobText = [
+    `Title: ${job.title || ''}`,
+    `Company: ${job.company || ''}`,
+    `Location: ${job.location || ''}`,
+    `Type: ${job.type || ''}`,
+    `Salary: ${job.salary || ''}`,
+    `Skills: ${(job.skills || []).filter(Boolean).join(', ')}`,
+    `Description:\n${(job.description || '').slice(0, 4000)}`,
+  ].join('\n');
+  const system = 'You are an expert job-application writer. Write concise, persuasive, professional cover letters tailored to each posting. Never invent facts about the candidate — only use what is provided. No awkward placeholders.';
+  const userPrompt = [
+    'Write a short professional cover letter email for the job below using ONLY the candidate\'s real details.',
+    'Return JSON with exactly two fields: "subject" (a short email subject line) and "body" (plain-text paragraphs ready to paste into an email).',
+    'JOB:',
+    jobText,
+    'CANDIDATE:',
+    ctx || 'No structured profile provided — keep it brief and factual.',
+  ].join('\n');
+  const reply = await aiChat(cfg, { system, user: userPrompt });
+  let subject = `Application: ${job.title || 'Job'}${job.company ? ' at ' + job.company : ''}`;
+  let body = reply;
+  try {
+    const clean = String(reply).replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    const parsed = JSON.parse(clean);
+    if (parsed.subject) subject = String(parsed.subject).slice(0, 200);
+    if (parsed.body) body = String(parsed.body);
+  } catch { /* model returned plain text — use it as the body */ }
+  return { subject, body };
+}
+
+function publicApplication(a) {
+  return {
+    id: a._id,
+    seekerId: a.seekerId,
+    jobId: a.jobId,
+    jobTitle: a.jobTitle,
+    company: a.company,
+    source: a.source,
+    url: a.url,
+    toEmail: a.toEmail,
+    subject: a.subject,
+    coverLetter: a.coverLetter,
+    method: a.method,
+    status: a.status,
+    error: a.error,
+    sentAt: a.sentAt,
+    createdAt: a.createdAt,
+  };
+}
+
+// ── AI Auto-Apply: seeker email connection ─────────────────────────────────
+
+app.get('/api/email/status', authenticateToken, async (req, res) => {
+  try {
+    const doc = await EmailConnection.findOne({ userId: req.user.userId });
+    res.json({
+      connected: !!doc,
+      connection: doc
+        ? { provider: doc.provider, email: doc.email, displayName: doc.displayName, host: doc.host, port: doc.port, secure: !!doc.secure, verifiedAt: doc.verifiedAt }
+        : null,
+    });
+  } catch (error) {
+    console.error('Email status error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/email/connect', authenticateToken, async (req, res) => {
+  try {
+    const { provider, email, displayName, host, port, secure, user, password } = req.body || {};
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      return res.status(400).json({ message: 'Please provide a valid email address.' });
+    }
+    if (!password) {
+      return res.status(400).json({ message: 'Please provide the app password for this mailbox.' });
+    }
+    const preset = emailPresetFor(email, provider);
+    const con = {
+      userId: req.user.userId,
+      provider: preset.provider,
+      email: String(email).trim().toLowerCase(),
+      displayName: String(displayName || '').trim(),
+      host: String(host || preset.host || '').trim(),
+      port: Number(port || preset.port || 465),
+      secure: secure !== undefined ? !!secure : !!preset.secure,
+      user: String(user || email || '').trim(),
+    };
+    if (!con.host) return res.status(400).json({ message: 'We could not detect this mailbox\'s server. Use the Custom provider and fill in your SMTP settings.' });
+
+    // Verify the connection before storing anything.
+    const test = nodemailer.createTransport({
+      host: con.host,
+      port: con.port,
+      secure: con.secure,
+      auth: { user: con.user, pass: String(password) },
+    });
+    try {
+      await test.verify();
+    } catch (e) {
+      return res.status(400).json({
+        message: 'Could not connect to the email server. Double-check the app password and try again.',
+        detail: e.message,
+      });
+    }
+
+    const existing = await EmailConnection.findOne({ userId: req.user.userId });
+    const doc = existing || new EmailConnection({ userId: req.user.userId });
+    Object.assign(doc, con, { secret: encryptSecret(String(password)), verifiedAt: new Date() });
+    await doc.save();
+    res.json({ ok: true, email: doc.email, provider: doc.provider, host: doc.host, port: doc.port, secure: !!doc.secure, displayName: doc.displayName });
+  } catch (error) {
+    console.error('Email connect error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.delete('/api/email/connect', authenticateToken, async (req, res) => {
+  try {
+    await EmailConnection.deleteOne({ userId: req.user.userId });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Email disconnect error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── AI Auto-Apply: draft & send ─────────────────────────────────────────────
+
+// Whether the platform's AI is configured (so the UI can steer the talent).
+app.get('/api/ai/status', authenticateToken, async (req, res) => {
+  try {
+    const cfg = await getConfig('ai');
+    res.json({
+      configured: !!(cfg?.apiKey && cfg?.model),
+      provider: cfg?.provider || '',
+      model: cfg?.model || '',
+    });
+  } catch (error) {
+    console.error('AI status error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Generate (don't send) a tailored cover letter for a job.
+app.post('/api/ai/apply/draft', authenticateToken, async (req, res) => {
+  try {
+    const job = req.body?.job;
+    if (!job) return res.status(400).json({ message: 'Missing job details.' });
+    const user = await User.findById(req.user.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const { subject, body } = await generateApplication(user, job, cvToPlainText(user.cv));
+    res.json({ subject, body, toEmail: discoverApplyEmail(job), cvAttached: !!user.cv });
+  } catch (error) {
+    console.error('AI draft error:', error);
+    res.status(400).json({ message: error.message || 'Could not generate the application.' });
+  }
+});
+
+// Finalise and send the application from the talent's own inbox.
+app.post('/api/ai/apply/send', authenticateToken, async (req, res) => {
+  try {
+    const { job, subject, coverLetter, toEmail } = req.body || {};
+    if (!job) return res.status(400).json({ message: 'Missing job details.' });
+    const user = await User.findById(req.user.userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const record = {
+      seekerId: user._id,
+      jobId: job._id || job.id || '',
+      jobTitle: job.title || '',
+      company: job.company || '',
+      source: job.source || 'Platform',
+      url: job.url || '',
+      subject: String(subject || '').slice(0, 300),
+      coverLetter: String(coverLetter || ''),
+    };
+    const target = String(toEmail || '').trim();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target)) {
+      const drafted = await Application.create({ ...record, toEmail: '', method: 'draft', status: 'draft' });
+      return res.json({ application: publicApplication(drafted), method: 'draft' });
+    }
+
+    const conn = await EmailConnection.findOne({ userId: user._id });
+    if (!conn) return res.status(400).json({ message: 'Connect your email first.' });
+
+    try {
+      const transporter = buildUserTransporter(conn);
+      await transporter.sendMail({
+        from: `"${conn.displayName || user.name || 'Candidate'}" <${conn.email}>`,
+        to: target,
+        subject: record.subject,
+        text: record.coverLetter,
+        html: coverLetterToHtml(record.coverLetter, user),
+        attachments: cvAttachment(user),
+      });
+    } catch (e) {
+      const failed = await Application.create({ ...record, toEmail: target, method: 'email', status: 'failed', error: e.message });
+      console.error('AI apply send error:', e.message);
+      return res.status(400).json({ message: 'The email could not be sent. ' + e.message, application: publicApplication(failed) });
+    }
+
+    const sent = await Application.create({ ...record, toEmail: target, method: 'email', status: 'sent', sentAt: new Date() });
+    await Notification.create({
+      userId: user._id,
+      type: 'application',
+      title: 'Application sent',
+      body: `Your application for ${job.title || 'the role'}${job.company ? ' at ' + job.company : ''} was emailed from ${conn.email}.`,
+    });
+    res.json({ application: publicApplication(sent), method: 'email' });
+  } catch (error) {
+    console.error('AI apply error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Applications the current seeker has submitted (sent or manual drafts).
+app.get('/api/applications', authenticateToken, async (req, res) => {
+  try {
+    const list = await Application.find({ seekerId: req.user.userId }).sort({ createdAt: -1 }).limit(100);
+    res.json({ applications: list.map(publicApplication) });
+  } catch (error) {
+    console.error('Applications error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ── AI Auto-Apply: admin ────────────────────────────────────────────────────
+
+// Live model list test — the admin enters a key + provider and we ask the
+// provider which models exist, before anything is saved.
+app.post('/api/admin/ai/models', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    let { provider, apiKey, baseUrl } = req.body || {};
+    provider = provider || 'openai';
+    // A blank key in the form means "use the already-saved key".
+    if (!apiKey) {
+      const saved = (await getConfig('ai')) || {};
+      apiKey = saved.apiKey || '';
+    }
+    if (!apiKey) return res.status(400).json({ message: 'Enter an API key first.' });
+    const models = await listAiModels({ provider, apiKey, baseUrl });
+    if (!models.length) return res.status(400).json({ message: 'No models returned. Check the provider and key.' });
+    res.json({ models, count: models.length });
+  } catch (error) {
+    console.error('Admin AI models error:', error);
+    res.status(400).json({ message: error.message || 'Could not load models. Check the key and provider.' });
+  }
+});
+
+// Admin read of the saved AI config (key masked) + live model list.
+app.get('/api/admin/ai/config', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const cfg = (await getConfig('ai')) || {};
+    const hasKey = !!(cfg.apiKey || '').length;
+    let models = [];
+    let modelError = '';
+    if (hasKey) {
+      try {
+        models = await listAiModels({ provider: cfg.provider, apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
+      } catch (e) {
+        modelError = e.message;
+      }
+    }
+    res.json({
+      config: { provider: cfg.provider || 'openai', model: cfg.model || '', baseUrl: cfg.baseUrl || '', apiKeyMasked: hasKey ? maskKey(cfg.apiKey) : '', hasKey },
+      models,
+      modelError,
+    });
+  } catch (error) {
+    console.error('Admin AI config error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Every AI-assisted application across the platform (for the admin panel).
+app.get('/api/admin/applications', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
+    const { status, q } = req.query;
+    const filter = {};
+    if (status && status !== 'all') filter.status = status;
+    let list = await Application.find(filter).sort({ createdAt: -1 }).limit(200);
+    if (q && q.trim()) {
+      const rx = new RegExp(q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      list = list.filter((a) => rx.test(a.jobTitle) || rx.test(a.company) || rx.test(a.toEmail) || rx.test(a.subject));
+    }
+    const userIds = [...new Set(list.map((a) => String(a.seekerId)))];
+    const users = await User.find({ _id: { $in: userIds } }).select('name email');
+    const byId = new Map(users.map((u) => [String(u._id), u]));
+    const applications = list.map((a) => {
+      const u = byId.get(String(a.seekerId));
+      return { ...publicApplication(a), seeker: u ? { id: u._id, name: u.name, email: u.email } : null };
+    });
+    res.json({ applications, count: applications.length });
+  } catch (error) {
+    console.error('Admin applications error:', error);
+res.status(500).json({ message: 'Server error' });
   }
 });
 

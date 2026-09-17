@@ -89,6 +89,8 @@ All models are defined in `server.js`.
 | **CallSignal** / **CallIceCandidate** | Signaling for instant calls | Same pattern as interview signals |
 | **SupportTicket** | User ↔ admin support thread | `userId`, `userRole`, `subject`, `category`, `status`, `priority`, `messages[]` |
 | **TalentReview** | Employer review of an unlocked talent | `employerId`, `seekerId`, `rating` (1–5), `review` |
+| **EmailConnection** | Seeker's connected mailbox (Gmail/Outlook/SMTP) | `userId` (unique), `provider`, `email`, `host`, `port`, `secure`, encrypted `secret` |
+| **Application** | AI-assisted job application | `seekerId`, `jobId`, `jobTitle`, `company`, `toEmail`, `subject`, `coverLetter`, `method` (email/draft), `status` (draft/sent/failed) |
 
 ## API Endpoints
 
@@ -137,6 +139,13 @@ All models are defined in `server.js`.
 | `GET` | `/api/support/tickets` | List my own tickets |
 | `GET` | `/api/support/tickets/:id` | View one of my tickets |
 | `POST` | `/api/support/tickets/:id/messages` | Reply on my ticket (owner only) |
+| `GET` | `/api/ai/status` | Whether the platform AI is configured |
+| `GET` | `/api/email/status` | Connected mailbox status |
+| `POST` | `/api/email/connect` | Connect Gmail/Outlook/SMTP (verifies + stores encrypted) |
+| `DELETE` | `/api/email/connect` | Disconnect the mailbox |
+| `POST` | `/api/ai/apply/draft` | AI-draft a cover letter for a job (no send) |
+| `POST` | `/api/ai/apply/send` | Email the application + CV from the seeker's inbox (or record a draft) |
+| `GET` | `/api/applications` | My AI applications (sent + drafts) |
 
 ### Hub-only
 
@@ -190,7 +199,10 @@ All models are defined in `server.js`.
 | `PATCH` | `/api/admin/support/tickets/:id` | Update status / priority (notifies the owner) |
 | `DELETE` | `/api/admin/talent-reviews/:id` | Delete an inappropriate talent review |
 | `GET` | `/api/admin/config/:key` | Read platform config |
-| `PUT` | `/api/admin/config/:key` | Write platform config |
+| `PUT` | `/api/admin/config/:key` | Write platform config (AI key kept when blank) |
+| `POST` | `/api/admin/ai/models` | Live-test a provider key and list its models |
+| `GET` | `/api/admin/ai/config` | Saved AI config (key masked) + live model list |
+| `GET` | `/api/admin/applications` | Every AI application across the platform |
 | `PUT` | `/api/admin/me/credentials` | Change admin password |
 | `PUT` | `/api/content` | Save landing page content |
 | `POST` | `/api/content/reset` | Reset content to defaults |
@@ -246,6 +258,17 @@ All models are defined in `server.js`.
 2. `GET /api/employer/reviewables` lists eligible talents + any existing review; the employer rates 1–5 stars with an optional note (`POST /api/seekers/:id/review`, one review per pair, editable).
 3. Reviews appear at the **bottom of the talent's public portfolio** (`GET /api/seekers/:id/reviews`).
 4. Admins can remove inappropriate reviews (`DELETE /api/admin/talent-reviews/:id`).
+
+### AI Auto-Apply
+
+1. **Admin setup:** In the admin panel's **AI & Automation → AI Auto-Apply** section the admin picks a provider, enters an API key, loads the live model list, and picks the model (auto-selected when only one exists). Saved via `PUT /api/admin/config/ai` into the `SiteConfig('ai')` doc.
+2. **Seeker connects their inbox:** In the "Apply with AI" modal a seeker connects Gmail / Outlook / custom SMTP with an app password (`POST /api/email/connect`). Credentials are verified and the password stored AES-256-GCM encrypted.
+3. **Drafting:** The seeker clicks **Apply with AI** on a job → `POST /api/ai/apply/draft` has the configured model write a tailored cover letter (subject + body) from the seeker's structured profile + plain-text CV (`cv` data URL), returning an editable draft + any discovered apply email.
+4. **Sending:** The seeker confirms → `POST /api/ai/apply/send`.
+   - With a destination address: the application email (cover letter + CV attachment) is sent **from the seeker's own inbox**; an `Application` record is stored with status `sent` and a `Notification` is created.
+   - Without an address: the application is recorded as status `draft` and the seeker is handed off to the original posting to finish manually.
+5. **Visibility:** Seekers track everything in the **My Applications** tab; admins see all applications in the admin AI section.
+6. **Providers supported:** OpenAI, Google Gemini, Anthropic (native APIs) plus Groq, OpenRouter, Together and any OpenAI-compatible base URL.
 
 ## Security Notes
 
