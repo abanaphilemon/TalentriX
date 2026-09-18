@@ -150,7 +150,7 @@ export default function Hero() {
                   </div>
                   <div>
                     <div className="text-sm font-bold text-secondary">{hero.badgeCardTitle || 'Verified Talent'}</div>
-                    <div className="text-xs text-secondary/60">{hero.badgeCardSub || 'Approved & interviewed'}</div>
+                    <div className="text-xs text-secondary/60">{hero.badgeCardSub || 'Screened & interviewed'}</div>
                   </div>
                 </motion.div>
           </div>

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import { useGoogleClient } from '../context/GoogleClientContext.jsx';
 import { roles } from '../data/content.js';
 import OtpEntry from './OtpEntry.jsx';
 
@@ -48,14 +49,10 @@ const GoogleG = () => (
   </svg>
 );
 
-// Returns true if a real OAuth client ID is configured
-function hasClientId() {
-  const id = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-  return (
-    typeof id === 'string' &&
-    id.length > 10 &&
-    id.includes('.apps.googleusercontent.com')
-  );
+// True if a real Google OAuth client ID is available (from the admin panel
+// or VITE_GOOGLE_CLIENT_ID) — not just the demo placeholder.
+function hasClientId(configured) {
+  return configured;
 }
 
 // Hero copy + icon for the left column — switches based on role
@@ -143,6 +140,7 @@ export default function AuthPage() {
 
   const { content } = useContent();
   const brandName = content.branding?.name || 'TalentriX';
+  const { configured } = useGoogleClient();
 
   const {
     register,
@@ -273,7 +271,7 @@ export default function AuthPage() {
                       : role === 'seeker'
                       ? [
                           'Build a polished public portfolio',
-                          'Approved & interviewed by our team',
+                          'Screened & interviewed by our team',
                           'Privacy-first — you control who sees what',
                         ]
                       : [
@@ -363,7 +361,7 @@ export default function AuthPage() {
                 </div>
 
                 {/* ───── Google button ───── */}
-                {hasClientId() ? (
+                {hasClientId(configured) ? (
                   <div className="flex justify-center w-full">
                     <div className="w-full max-w-[320px]">
                       <GoogleLogin
@@ -384,7 +382,7 @@ export default function AuthPage() {
                     type="button"
                     onClick={() =>
                       setSubmitError(
-                        'Google OAuth isn\'t configured yet. Add VITE_GOOGLE_CLIENT_ID to .env — see README.'
+                        'Google OAuth isn\'t configured yet. Add the Google OAuth client ID in the admin panel (Settings → Email → OAuth app), or set VITE_GOOGLE_CLIENT_ID in the frontend .env — see README.'
                       )
                     }
                     className="w-full inline-flex items-center justify-center gap-3 px-5 py-3 rounded-full border border-secondary/15 bg-white text-secondary font-medium hover:bg-secondary/5 transition-colors"

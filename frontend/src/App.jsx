@@ -5,7 +5,8 @@ const API_URL = import.meta.env.VITE_API_URL || '/api';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext.jsx';
 import { ContentProvider } from './context/ContentContext.jsx';
-import { Hourglass, XCircle, Ban, AlertTriangle, LogOut, Home } from 'lucide-react';
+import { GoogleClientProvider, useGoogleClient } from './context/GoogleClientContext.jsx';
+import { Ban, AlertTriangle, LogOut, Home } from 'lucide-react';
 import Header from './components/Header.jsx';
 import Hero from './components/Hero.jsx';
 import CtaSection from './components/CtaSection.jsx';
@@ -27,9 +28,6 @@ import AdminDashboard from './pages/AdminDashboard.jsx';
 import OnboardingPage from './pages/OnboardingPage.jsx';
 import InterviewSchedulingPage from './pages/InterviewSchedulingPage.jsx';
 import VideoCallPage from './pages/VideoCallPage.jsx';
-
-const GOOGLE_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID || 'demo-client-id.apps.googleusercontent.com';
 
 const DASHBOARDS = {
   hub: '/dashboard/hub',
@@ -103,7 +101,7 @@ function NotFoundPage() {
   );
 }
 
-// ── Account status gate (pending / rejected / disabled) ──
+// ── Account status gate (disabled accounts) ──
 function AccountStatus({ user }) {
   const navigate = useNavigate();
   const { updateUser, signOut } = useAuth();
@@ -124,20 +122,9 @@ function AccountStatus({ user }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  let icon = Hourglass;
-  let title = 'Awaiting admin approval';
-  let msg =
-    'Your account has been created and is already in the review queue. An administrator will approve it shortly — you will get full access to your dashboard once approved.';
-
-  if (user.active === false) {
-    icon = Ban;
-    title = 'Account disabled';
-    msg = 'This account has been disabled by an administrator. Contact support if you believe this is a mistake.';
-  } else if (user.status === 'rejected') {
-    icon = XCircle;
-    title = 'Account not approved';
-    msg = 'Your registration was not approved by an administrator. Contact support if you believe this is a mistake.';
-  }
+  let icon = Ban;
+  let title = 'Account disabled';
+  let msg = 'This account has been disabled by an administrator. Contact support if you believe this is a mistake.';
 
   const Icon = icon;
   return (
@@ -325,7 +312,16 @@ function ScrollToTop() {
 
 export default function App() {
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+    <GoogleClientProvider>
+      <AppInner />
+    </GoogleClientProvider>
+  );
+}
+
+function AppInner() {
+  const { clientId } = useGoogleClient();
+  return (
+    <GoogleOAuthProvider clientId={clientId}>
       <AuthProvider>
         <ContentProvider>
           <BrowserRouter>

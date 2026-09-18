@@ -26,9 +26,9 @@ const SECTIONS = [
       'All new accounts have two-factor authentication enabled. When signing in you will be asked for a one-time code sent to your registered email. Codes are valid for 10 minutes and limited to a small number of attempts. If you lose access to your email, contact support to restore your account.',
   },
   {
-    title: '5. Account approval and interviews',
+    title: '5. Account interviews',
     body:
-      'Hubs and job seekers are reviewed by our team and must complete an onboarding interview before full dashboard access is granted. Employers may use the platform immediately. We may reject or disable any account for conduct that endangers trust, safety, or quality on the platform.',
+      'Hubs and job seekers verify their email and must complete a short onboarding interview before full dashboard access is granted. Employers may use the platform immediately. We may disable or remove any account for conduct that endangers trust, safety, or quality on the platform.',
   },
   {
     title: '6. Appropriate use',

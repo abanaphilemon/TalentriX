@@ -208,7 +208,7 @@ export default function EmployerRequestTalent() {
               <Target className="w-5 h-5 text-primary" /> Describe who you're looking for
             </h2>
             <p className="text-sm text-secondary/50">
-              The platform will scan every approved, interviewed talent and rate how well each one fits, by percentage.
+              The platform will scan every interviewed talent and rate how well each one fits, by percentage.
             </p>
           </div>
           <button onClick={() => setMode('list')} className="text-sm font-semibold text-secondary/60 hover:text-secondary">
@@ -320,7 +320,7 @@ export default function EmployerRequestTalent() {
 
         {matching ? (
           <div className="flex items-center justify-center py-20 text-secondary/50">
-            <Loader2 className="w-6 h-6 animate-spin text-primary mr-2" /> Matching against every approved, interviewed talent…
+            <Loader2 className="w-6 h-6 animate-spin text-primary mr-2" /> Matching against every interviewed talent…
           </div>
         ) : results.length === 0 ? (
           <div className="bg-white rounded-2xl border border-dashed border-secondary/20 p-12 text-center">

@@ -380,7 +380,12 @@ function interviewEnd(iv) {
 // Middleware
 const corsOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',')
-  : ['https://talentri-x.vercel.app', 'https://talentri-x.vercel.app'];
+  : [
+      'https://talentri-x.vercel.app',
+      'https://talentri-x.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:4173',
+    ];
 app.use(cors({
   origin: corsOrigins,
   credentials: true,
@@ -837,12 +842,12 @@ const DEFAULT_SITE = {
     titleHighlight: 'verified',
     titleSuffix: ' talent, securely.',
     subtitle:
-      'TalentriX connects you with job seekers who are already approved, interviewed, and interview-ready. Every candidate runs a live public portfolio — then chat privately in an end-to-end-encrypted room and hop on a video call before you decide.',
+      'TalentriX connects you with job seekers who are already interviewed and interview-ready. Every candidate runs a live public portfolio — then chat privately in an end-to-end-encrypted room and hop on a video call before you decide.',
     ctaPrimary: 'Get Started',
     ctaSecondary: 'See How It Works',
     image: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1200&auto=format&fit=crop&q=70',
     badgeCardTitle: 'Verified Talent',
-    badgeCardSub: 'Approved & interviewed',
+    badgeCardSub: 'Screened & interviewed',
   },
   heroStats: [
     { value: '100%', label: 'Vetted' },
@@ -861,11 +866,11 @@ const DEFAULT_SITE = {
     title: 'Recruitment that finally ',
     titleHighlight: 'respects everyone',
     titleSuffix: '.',
-    body: 'TalentriX is a secure talent marketplace. Job seekers build a polished public portfolio and are approved and interviewed by our team before they join the pool. Talent hubs invite and endorse their members and publish grants. Employers search vetted talent, unlock a private chat for a small one-off connect fee, and meet candidates over a built-in video call before they commit.',
+    body: 'TalentriX is a secure talent marketplace. Job seekers build a polished public portfolio and are interviewed by our team before they join the pool. Talent hubs invite and endorse their members and publish grants. Employers search vetted talent, unlock a private chat for a small one-off connect fee, and meet candidates over a built-in video call before they commit.',
     image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&auto=format&fit=crop&q=70',
   },
   features: [
-    { title: 'Human-Vetted Talent', desc: 'Every job seeker is approved by an administrator and completes an onboarding interview before entering the talent pool — so employers meet people who are genuinely ready to talk.' },
+    { title: 'Human-Vetted Talent', desc: 'Every job seeker verifies their email and completes an onboarding interview before entering the talent pool — so employers meet people who are genuinely ready to talk.' },
     { title: 'Secure Paid Chat', desc: 'Chat privately with a candidate through end-to-end encrypted messaging, unlocked by a small one-off connect fee. No subscription, no surprise costs.' },
     { title: 'Public Portfolios', desc: 'Each candidate runs a polished public portfolio — experience, projects, skills, certifications, and hub endorsements — all in one shareable link.' },
     { title: 'Hubs & Endorsements', desc: 'Talent hubs grow their own community through a unique invite link, endorse their members, and publish grants their talent can apply for.' },
@@ -981,10 +986,10 @@ async function seedSite() {
     { $set: { status: 'approved', active: true } }
   );
 
-  // Employers no longer need admin approval — approve any that are still
-  // pending so they aren't locked out of their dashboard.
+  // Email verification replaced manual moderation — approve any accounts that
+  // are still pending so nobody is stuck in a review queue.
   await User.updateMany(
-    { role: 'employer', status: 'pending' },
+    { status: 'pending' },
     { $set: { status: 'approved', active: true } }
   );
 
@@ -1174,12 +1179,11 @@ app.post('/api/register', async (req, res) => {
       termsAcceptedAt: new Date(),
       twoFactorEnabled: true,
     });
-    // Employers don't need admin approval — approve them at registration so
-    // they can use the dashboard immediately.
-    if (role === 'employer') {
-      user.status = 'approved';
-      user.active = true;
-    }
+    // Email-verified accounts are trusted immediately — there is no admin
+    // approval step anymore. Status stays 'approved' unless an admin disables
+    // or deletes the account.
+    user.status = 'approved';
+    user.active = true;
     await user.save();
 
     // Chat keys are automatic — every account gets a keypair right away.
@@ -2500,7 +2504,7 @@ async function syncPayment(record) {
 // ── Admin: user management ─────────────────────────────────────────────────
 
 // List every account with optional role/status/active filters and free-text
-// search. Returns the pending count too (for the moderation badge).
+// search.
 app.get('/api/admin/users', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
@@ -2516,32 +2520,31 @@ app.get('/api/admin/users', authenticateToken, async (req, res) => {
     const users = await User.find(filter)
       .select('-password -e2ePriv')
       .sort({ createdAt: -1 });
-    const pendingCount = await User.countDocuments({ status: 'pending' });
-    res.json({ users: users.map(publicUser), pendingCount });
+    res.json({ users: users.map(publicUser) });
   } catch (error) {
     console.error('Admin users list error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Admin: approve, reject, deactivate or reactivate an account.
+// Admin: deactivate, reactivate or permanently delete an account. There is no
+// approve/reject step anymore — email verification qualifies new accounts.
 app.patch('/api/admin/users/:id', authenticateToken, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ message: 'Admin access required' });
-    const { status, active } = req.body || {};
+    const { active } = req.body || {};
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     if (String(user._id) === String(req.user.userId)) {
       return res.status(400).json({ message: 'You cannot change your own account' });
     }
-    if (status !== undefined) {
-      if (!['pending', 'approved', 'rejected'].includes(status)) {
-        return res.status(400).json({ message: 'Invalid status' });
-      }
-      user.status = status;
+    if (active !== undefined) {
+      user.active = active === true;
+      // Re-enabling an account restores full access regardless of any legacy
+      // status (e.g. an old 'rejected' account).
+      if (user.active === true) user.status = 'approved';
     }
-    if (active !== undefined) user.active = active === true;
 
     await user.save();
 
@@ -5320,6 +5323,19 @@ function oauthStateDecode(raw) {
     return {};
   }
 }
+
+// Public — returns just the Google OAuth client ID the admin saved in the
+// admin panel, so the sign-in button can use the same credentials. The client
+// ID is public by design (it ships to the browser); the secret stays server-side.
+app.get('/api/oauth/config', async (req, res) => {
+  try {
+    const cfg = (await getConfig('oauth')) || {};
+    res.json({ google: { clientId: cfg.google?.clientId || '' } });
+  } catch (error) {
+    console.error('OAuth config error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 app.get('/api/oauth/:provider/auth', authenticateToken, async (req, res) => {
   try {

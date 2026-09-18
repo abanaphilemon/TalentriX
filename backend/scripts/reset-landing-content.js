@@ -15,12 +15,12 @@ const DEFAULT_SITE = {
     titleHighlight: 'verified',
     titleSuffix: ' talent, securely.',
     subtitle:
-      'TalentriX connects you with job seekers who are already approved, interviewed, and interview-ready. Every candidate runs a live public portfolio — then chat privately in an end-to-end-encrypted room and hop on a video call before you decide.',
+      'TalentriX connects you with job seekers who are already interviewed and interview-ready. Every candidate runs a live public portfolio — then chat privately in an end-to-end-encrypted room and hop on a video call before you decide.',
     ctaPrimary: 'Get Started',
     ctaSecondary: 'See How It Works',
     image: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1200&auto=format&fit=crop&q=70',
     badgeCardTitle: 'Verified Talent',
-    badgeCardSub: 'Approved & interviewed',
+    badgeCardSub: 'Screened & interviewed',
   },
   heroStats: [
     { value: '100%', label: 'Vetted' },
@@ -39,11 +39,11 @@ const DEFAULT_SITE = {
     title: 'Recruitment that finally ',
     titleHighlight: 'respects everyone',
     titleSuffix: '.',
-    body: 'TalentriX is a secure talent marketplace. Job seekers build a polished public portfolio and are approved and interviewed by our team before they join the pool. Talent hubs invite and endorse their members and publish grants. Employers search vetted talent, unlock a private chat for a small one-off connect fee, and meet candidates over a built-in video call before they commit.',
+    body: 'TalentriX is a secure talent marketplace. Job seekers build a polished public portfolio and are interviewed by our team before they join the pool. Talent hubs invite and endorse their members and publish grants. Employers search vetted talent, unlock a private chat for a small one-off connect fee, and meet candidates over a built-in video call before they commit.',
     image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&auto=format&fit=crop&q=70',
   },
   features: [
-    { title: 'Human-Vetted Talent', desc: 'Every job seeker is approved by an administrator and completes an onboarding interview before entering the talent pool — so employers meet people who are genuinely ready to talk.' },
+    { title: 'Human-Vetted Talent', desc: 'Every job seeker verifies their email and completes an onboarding interview before entering the talent pool — so employers meet people who are genuinely ready to talk.' },
     { title: 'Secure Paid Chat', desc: 'Chat privately with a candidate through end-to-end encrypted messaging, unlocked by a small one-off connect fee. No subscription, no surprise costs.' },
     { title: 'Public Portfolios', desc: 'Each candidate runs a polished public portfolio — experience, projects, skills, certifications, and hub endorsements — all in one shareable link.' },
     { title: 'Hubs & Endorsements', desc: 'Talent hubs grow their own community through a unique invite link, endorse their members, and publish grants their talent can apply for.' },

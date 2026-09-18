@@ -331,7 +331,7 @@ export default function OnboardingPage() {
   }
 
   if (done) {
-    const userStatus = user?.status || 'pending';
+    const userStatus = user?.status || 'approved';
     return (
       <main className="min-h-screen bg-[#faf9f6]">
         <Topbar branding={branding} user={user} signOut={signOut} />
@@ -340,10 +340,10 @@ export default function OnboardingPage() {
             <div className="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center mb-5">
               <ShieldCheck className="w-8 h-8 text-green-600" />
             </div>
-            <h1 className="font-display text-2xl md:text-3xl font-bold text-secondary">Profile saved — awaiting admin approval</h1>
+            <h1 className="font-display text-2xl md:text-3xl font-bold text-secondary">Profile saved — your account is active</h1>
             <p className="text-secondary/60 text-sm mt-2 leading-relaxed">
-              Your account has been submitted for review. A site administrator will approve it shortly.
-              Once approved, your dashboard and {role === 'seeker' ? 'portfolio' : 'account'} become fully active.
+              Your account is live right away. Next, book a short onboarding interview to unlock your full dashboard
+              and join the talent pool.
             </p>
 
             {role === 'seeker' && (
@@ -353,7 +353,7 @@ export default function OnboardingPage() {
                   <h3 className="font-display font-bold">Your portfolio link (individual link)</h3>
                 </div>
                 <p className="text-white/60 text-xs mb-3">
-                  Goes live as soon as your account is approved. Share it anywhere afterwards.
+                  It goes live immediately — share it anywhere.
                 </p>
                 <div className="bg-white/10 border border-white/15 rounded-xl px-3 py-2.5 font-mono text-xs text-primary break-all">
                   {portfolioUrl}
@@ -390,17 +390,13 @@ export default function OnboardingPage() {
             )}
 
             <div className={`mt-6 p-3 rounded-xl text-sm flex items-start gap-2 ${
-              userStatus === 'rejected'
-                ? 'bg-red-50 border border-red-200 text-red-700'
-                : userStatus === 'pending'
-                ? 'bg-amber-50 border border-amber-200 text-amber-800'
-                : 'bg-green-50 border border-green-200 text-green-700'
+              userStatus === 'approved'
+                ? 'bg-green-50 border border-green-200 text-green-700'
+                : 'bg-red-50 border border-red-200 text-red-700'
             }`}>
-              {userStatus === 'pending'
-                ? 'Status: pending approval — an admin will review your account.'
-                : userStatus === 'rejected'
-                ? 'Status: rejected — contact an administrator for help.'
-                : 'Status: approved — you may proceed to your dashboard.'}
+              {userStatus === 'approved'
+                ? 'Status: active — your account is live.'
+                : 'Status: cannot proceed — contact an administrator for help.'}
             </div>
 
             <div className="flex flex-wrap gap-3 mt-6">
@@ -476,7 +472,7 @@ export default function OnboardingPage() {
                       className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-secondary text-sm font-bold hover:bg-primary/90 transition-colors disabled:opacity-60"
                     >
                       {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                      {saving ? 'Saving…' : 'Save & submit for approval'}
+                      {saving ? 'Saving…' : 'Save & continue'}
                     </button>
                   </div>
                 </div>
@@ -490,8 +486,8 @@ export default function OnboardingPage() {
                   <ShieldCheck className="w-5 h-5" /> After you save
                 </h3>
                 <ul className="mt-3 space-y-2 text-sm text-white/70">
-                  <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" /> Your account is submitted for admin approval.</li>
-                  <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" /> An admin approves your account before you get full access.</li>
+                  <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" /> Your account goes live immediately — no waiting for an admin.</li>
+                  <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" /> Book a short onboarding interview to unlock your full dashboard.</li>
                   <li className="flex gap-2"><CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" /> You can edit all of this later in your dashboard.</li>
                 </ul>
               </div>
@@ -503,7 +499,7 @@ export default function OnboardingPage() {
                     <h3 className="font-display font-bold text-secondary">Your portfolio link</h3>
                   </div>
                   <p className="text-sm text-secondary/60 mb-3">
-                    Everything here becomes your public portfolio page. It goes live once you're approved.
+                    Everything here becomes your public portfolio page. It goes live immediately after you save.
                   </p>
                   <div className="bg-secondary/5 border border-secondary/10 rounded-xl px-3 py-2.5 font-mono text-xs text-secondary break-all">
                     {portfolioUrl}

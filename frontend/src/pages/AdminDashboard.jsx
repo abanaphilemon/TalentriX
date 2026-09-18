@@ -24,8 +24,6 @@ import {
   CreditCard,
   Key,
   Users,
-  UserCheck,
-  UserX,
   Power,
   CalendarDays,
   Video,
@@ -92,7 +90,7 @@ const SECTION_GROUPS = [
     id: 'users',
     label: 'Users & Access',
     items: [
-      { id: 'users', label: 'Users', desc: 'Approve, reject, deactivate or remove accounts.', special: 'users' },
+      { id: 'users', label: 'Users', desc: 'Deactivate, reactivate or remove accounts.', special: 'users' },
       { id: 'interviews', label: 'Onboarding Interviews', desc: 'Approve interview times, join calls, mark complete.', special: 'interviews' },
       { id: 'support', label: 'Support Tickets', desc: 'Reply to hub, seeker and employer tickets.', special: 'support' },
     ],
@@ -434,7 +432,6 @@ export default function AdminDashboard() {
   const [userRoleFilter, setUserRoleFilter] = useState('all');
   const [userStatusFilter, setUserStatusFilter] = useState('all');
   const [userSearch, setUserSearch] = useState('');
-  const [usersPendingCount, setUsersPendingCount] = useState(0);
 
   // Interviews & calls
   const [interviews, setInterviews] = useState([]);
@@ -500,7 +497,6 @@ export default function AdminDashboard() {
         if (!res.ok) throw new Error(data.message || 'Failed to load users');
         if (active) {
           setUsers(data.users || []);
-          setUsersPendingCount(data.pendingCount || 0);
         }
       } catch (e) {
         if (active) setToast({ type: 'err', msg: e.message || 'Could not load users.' });
@@ -512,26 +508,6 @@ export default function AdminDashboard() {
       active = false;
     };
   }, [section, token, userRoleFilter, userStatusFilter, userSearch]);
-
-  // Keep the pending badge count fresh even when the Users section is closed.
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/admin/users?status=pending`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (active) setUsersPendingCount(data.pendingCount || 0);
-      } catch {
-        // ignore
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [token]);
 
   // ── Interviews loading ──
   useEffect(() => {
@@ -930,11 +906,6 @@ export default function AdminDashboard() {
                                 {pendingCount} pending
                               </span>
                             )}
-                            {isUsers && usersPendingCount > 0 && (
-                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-white/25' : 'bg-amber-100 text-amber-800'}`}>
-                                {usersPendingCount} to review
-                              </span>
-                            )}
                             {isInterviews && interviewsPendingCount > 0 && (
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${active ? 'bg-white/25' : 'bg-blue-100 text-blue-800'}`}>
                                 {interviewsPendingCount} to schedule
@@ -1049,7 +1020,6 @@ export default function AdminDashboard() {
                   setStatusFilter={setUserStatusFilter}
                   search={userSearch}
                   setSearch={setUserSearch}
-                  pendingCount={usersPendingCount}
                   onUpdate={updateUserStatus}
                   onDelete={(id) => setConfirm({ kind: 'deleteUser', id })}
                 />
@@ -1416,7 +1386,7 @@ const initials = (name = '') =>
     .join('')
     .toUpperCase();
 
-function UsersManager({ users, loading, roleFilter, setRoleFilter, statusFilter, setStatusFilter, search, setSearch, pendingCount, onUpdate, onDelete }) {
+function UsersManager({ users, loading, roleFilter, setRoleFilter, statusFilter, setStatusFilter, search, setSearch, onUpdate, onDelete }) {
   return (
     <div>
       {/* Filters */}
@@ -1444,7 +1414,7 @@ function UsersManager({ users, loading, roleFilter, setRoleFilter, statusFilter,
           onChange={(e) => setStatusFilter(e.target.value)}
           className="sm:w-40 px-3 py-2.5 rounded-xl bg-white border border-secondary/10 text-sm outline-none focus:border-primary"
         >
-          {['all', 'pending', 'approved', 'rejected'].map((s) => (
+          {['all', 'approved', 'rejected'].map((s) => (
             <option key={s} value={s}>{s === 'all' ? 'All statuses' : s.charAt(0).toUpperCase() + s.slice(1)}</option>
           ))}
         </select>
@@ -1453,7 +1423,6 @@ function UsersManager({ users, loading, roleFilter, setRoleFilter, statusFilter,
       <div className="mb-4 flex items-center gap-2 text-xs text-secondary/50">
         <Users className="w-4 h-4" />
         {users.length} {users.length === 1 ? 'account' : 'accounts'}
-        {pendingCount > 0 && <span className="text-amber-700 font-semibold">· {pendingCount} pending approval</span>}
       </div>
 
       {loading ? (
@@ -1515,22 +1484,6 @@ function UsersManager({ users, loading, roleFilter, setRoleFilter, statusFilter,
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-2 shrink-0">
-                    {u.status !== 'approved' && (
-                      <button
-                        onClick={() => onUpdate(u.id, { status: 'approved' })}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-green-100 text-green-800 hover:bg-green-200 transition-colors"
-                      >
-                        <UserCheck className="w-3.5 h-3.5" /> Approve
-                      </button>
-                    )}
-                    {u.status === 'pending' && !isAdmin && (
-                      <button
-                        onClick={() => onUpdate(u.id, { status: 'rejected' })}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-100 text-red-800 hover:bg-red-200 transition-colors"
-                      >
-                        <UserX className="w-3.5 h-3.5" /> Reject
-                      </button>
-                    )}
                     {!isAdmin && (
                       <button
                         onClick={() => onUpdate(u.id, { active: inactive })}

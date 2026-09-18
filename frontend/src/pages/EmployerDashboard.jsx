@@ -799,7 +799,7 @@ export default function EmployerDashboard() {
                 </p>
                 <p className="text-sm text-secondary/60 mt-1">
                   {hubFilter
-                    ? 'No approved, interviewed talent is registered with that hub yet.'
+                    ? 'No interviewed talent is registered with that hub yet.'
                     : 'Seekers who register will appear here for you to discover.'}
                 </p>
               </div>
