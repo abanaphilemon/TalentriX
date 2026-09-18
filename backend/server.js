@@ -12,6 +12,10 @@ const nodemailer = require('nodemailer');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Render (and most hosts) terminate TLS at a proxy in front of the app, so
+// honor X-Forwarded-Proto/Host for req.protocol, redirects and OAuth callbacks.
+app.set('trust proxy', 1);
+
 // ── Email (SMTP) ────────────────────────────────────────────────────────────
 // Everything degrades gracefully: if SMTP credentials aren't configured the
 // reminders are logged to the console so development still works.
@@ -1119,6 +1123,150 @@ async function syncSitePartner(user) {
   doc.collaborators = list;
   await doc.save();
   console.log(`Synced partner tile for ${user.role}: ${name}`);
+}
+
+// Google sign-in / sign-up. The raw ID token from the frontend is verified
+// against Google's published signing keys using the OAuth client ID configured
+// in the admin panel. New emails get a real account — mirroring the email
+// registration flow, including the emailed verification code — and returning
+// emails reuse their existing account (same 2FA rule as password login).
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { idToken, role, hubRef, termsAccepted } = req.body || {};
+
+    if (!idToken) return res.status(400).json({ message: 'Google sign-in token is required' });
+    if (!['hub', 'seeker', 'employer'].includes(role)) {
+      return res.status(400).json({ message: 'Role must be hub, seeker, or employer' });
+    }
+
+    const profile = await verifyGoogleIdToken(String(idToken));
+    if (!profile) {
+      return res.status(401).json({ message: 'Could not verify your Google sign-in. Please try again.' });
+    }
+
+    const email = String(profile.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ message: 'Your Google account has no email. Try another sign-in method.' });
+    }
+    const name = String(profile.name || profile.given_name || email.split('@')[0] || 'User').trim();
+
+    const existing = await User.findOne({ email });
+    if (existing) {
+      if (existing.active === false) {
+        return res.status(403).json({ message: 'This account has been disabled. Contact an administrator.' });
+      }
+      // Same rule as password login: a fresh code is required unless the email
+      // is already verified and 2FA is off.
+      if (existing.emailVerified !== true || existing.twoFactorEnabled === true) {
+        const { sent } = await sendOtpEmail(existing, 'login');
+        return res.json({
+          message: 'Enter the code sent to your email to continue.',
+          requiresOtp: true,
+          purpose: 'login',
+          email: existing.email,
+          sent,
+        });
+      }
+      const token = jwt.sign(
+        { userId: existing._id, role: existing.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      return res.json({ message: 'Login successful', token, user: publicUser(existing) });
+    }
+
+    if (termsAccepted !== true && String(termsAccepted || '') !== 'true') {
+      return res.status(400).json({ message: 'You must accept the Terms & Conditions to create an account.' });
+    }
+
+    let hubId = null;
+    if (hubRef) {
+      const hub = await User.findOne({ hubRef, role: 'hub' });
+      if (!hub) return res.status(400).json({ message: 'Invalid registration link.' });
+      hubId = hub._id;
+    }
+
+    let hubCode = null;
+    if (role === 'hub') {
+      hubCode = nodeCrypto.randomUUID ? nodeCrypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10);
+      while (await User.findOne({ hubRef: hubCode })) {
+        hubCode = Math.random().toString(36).slice(2, 10);
+      }
+    }
+
+    const user = new User({
+      name,
+      email,
+      // The schema requires a password; Google-only accounts get a random one
+      // so they can sign in via Google but never via a password.
+      password: nodeCrypto.randomBytes(24).toString('hex'),
+      role,
+      hubRef: hubCode,
+      hubId,
+      termsAcceptedAt: new Date(),
+      twoFactorEnabled: true,
+    });
+    user.status = 'approved';
+    user.active = true;
+    await user.save();
+
+    await provisionKeys(user);
+    if (role === 'hub') await syncSitePartner(user);
+
+    const token = jwt.sign(
+      { userId: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // New accounts must verify their email with a code before onboarding.
+    const { sent } = await sendOtpEmail(user, 'verify');
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: publicUser(user),
+      verification: { needed: true, sent },
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Verify a Google ID token against Google's published signing keys, scoped to
+// the OAuth client ID stored in the admin panel's oauth config.
+async function verifyGoogleIdToken(idToken) {
+  const cfg = (await getConfig('oauth')) || {};
+  const clientId = cfg.google?.clientId;
+  if (!clientId) return null;
+  try {
+    const certsRes = await fetch('https://www.googleapis.com/oauth2/v3/certs', {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!certsRes.ok) return null;
+    const { keys = [] } = await certsRes.json();
+    for (const jwk of keys) {
+      try {
+        const publicKey = nodeCrypto.createPublicKey({ key: jwk, format: 'jwk' });
+        const payload = jwt.verify(idToken, publicKey, { algorithms: ['RS256'], audience: clientId });
+        if (payload && typeof payload === 'object' && payload.email) {
+          return {
+            sub: String(payload.sub || ''),
+            email: String(payload.email || '').trim(),
+            name: String(payload.name || payload.given_name || '').trim(),
+            given_name: String(payload.given_name || '').trim(),
+            picture: String(payload.picture || '').trim(),
+          };
+        }
+      } catch {
+        // wrong key for this token — try the next one
+      }
+    }
+  } catch {
+    // certificates endpoint unreachable — treated as unverifiable
+  }
+  return null;
 }
 
 // Register endpoint
@@ -5313,6 +5461,26 @@ async function oauthClientFor(kind) {
   return cfg[kind] || null;
 }
 
+// Resolve the OAuth redirect URI for a provider. Google and Microsoft reject
+// plain-HTTP redirect URIs unless they point at localhost, so anything else is
+// upgraded to HTTPS (Render terminates TLS in front of the app). The same value
+// must be used for the authorize request and the token exchange.
+function oauthRedirectUri(kind, client, req) {
+  let uri = String(client?.redirectUri || '').trim();
+  if (!uri) uri = `${req.protocol}://${req.get('host')}/api/oauth/${kind}/callback`;
+  try {
+    const url = new URL(uri);
+    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    if (url.protocol === 'http:' && !isLocal) {
+      url.protocol = 'https:';
+      uri = url.toString();
+    }
+  } catch {
+    // leave malformed values untouched so the admin can see what they typed
+  }
+  return uri;
+}
+
 function oauthState(jwt) {
   return Buffer.from(JSON.stringify({ t: jwt })).toString('base64url');
 }
@@ -5346,7 +5514,7 @@ app.get('/api/oauth/:provider/auth', authenticateToken, async (req, res) => {
         message: `OAuth is not configured yet — ask the admin to add ${kind === 'microsoft' ? 'Microsoft' : 'Google'} OAuth credentials in the admin panel.`,
       });
     }
-    const redirectUri = client.redirectUri || `${req.protocol}://${req.get('host')}/api/oauth/${kind}/callback`;
+    const redirectUri = oauthRedirectUri(kind, client, req);
     const state = oauthState(req.headers.authorization?.replace(/^Bearer\s+/i, '') || '');
     let url;
     if (kind === 'microsoft') {
@@ -5375,7 +5543,7 @@ app.get('/api/oauth/:provider/callback', async (req, res) => {
 
     const client = await oauthClientFor(kind);
     if (!client?.clientId || !client?.clientSecret) return res.status(400).send('OAuth is not configured.');
-    const redirectUri = client.redirectUri || `${req.protocol}://${req.get('host')}/api/oauth/${kind}/callback`;
+    const redirectUri = oauthRedirectUri(kind, client, req);
 
     const tokenUrl = kind === 'microsoft'
       ? 'https://login.microsoftonline.com/common/oauth2/v2.0/token'

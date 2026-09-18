@@ -238,11 +238,52 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // Google sign-in — stores profile locally (can be extended to call backend)
-  const signInWithGoogle = useCallback((googleProfile) => {
-    setUser(googleProfile);
-    setMode('closed');
-  }, []);
+  // Google sign-in / sign-up. The raw ID token is verified server-side; new
+  // emails are registered using the selected role (with the emailed code step)
+  // and returning emails are logged into their existing account.
+  const signInWithGoogle = useCallback(async ({ idToken, termsAccepted = false }) => {
+    try {
+      const res = await fetch(`${API_URL}/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, role, termsAccepted }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Google sign-in failed' };
+      }
+
+      if (data.requiresOtp) {
+        return {
+          ok: true,
+          requiresOtp: true,
+          purpose: data.purpose || 'login',
+          email: data.email,
+          sent: data.sent,
+        };
+      }
+
+      localStorage.setItem(STORAGE.token, data.token);
+      localStorage.setItem(STORAGE.role, data.user.role);
+      setUser(data.user);
+      setRole(data.user.role);
+
+      if (data.verification?.needed) {
+        // Brand-new Google account → the emailed verification code must be
+        // entered first (same step as email sign-up).
+        if (mode !== 'auth') setMode('closed');
+        return { ok: true, user: data.user, verification: data.verification };
+      }
+
+      setMode('closed');
+      registerChatKey(data.token);
+      return { ok: true, user: data.user };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [role, mode]);
 
   const signOut = useCallback(() => {
     localStorage.removeItem(STORAGE.token);

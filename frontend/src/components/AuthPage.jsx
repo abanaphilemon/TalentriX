@@ -2,10 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  GoogleLogin,
-} from '@react-oauth/google';
-import { jwtDecode } from 'jwt-decode';
+import { GoogleLogin } from '@react-oauth/google';
 import {
   X,
   ArrowLeft,
@@ -146,6 +143,7 @@ export default function AuthPage() {
     register,
     handleSubmit,
     reset,
+    getValues,
     formState: { errors, isSubmitting },
   } = useForm();
 
@@ -186,19 +184,23 @@ export default function AuthPage() {
   };
 
   // Google login — both tabs use the same handler
-  const onGoogleSuccess = (credentialResponse) => {
+  const onGoogleSuccess = async (credentialResponse) => {
     try {
-      const profile = jwtDecode(credentialResponse.credential);
-      signInWithGoogle({
-        sub: profile.sub,
-        email: profile.email,
-        name: profile.name,
-        picture: profile.picture,
+      const res = await signInWithGoogle({
+        idToken: credentialResponse.credential,
+        termsAccepted: tab === 'register' ? getValues('terms') === true : false,
       });
+      if (!res.ok) {
+        setSubmitError(res.error || 'Google sign-in failed. Please try again.');
+        return;
+      }
+      if (res.verification?.needed) {
+        setOtp({ purpose: 'verify', email: '', sent: res.verification.sent, role });
+      } else if (res.requiresOtp) {
+        setOtp({ purpose: res.purpose || 'login', email: res.email, sent: res.sent, role });
+      }
     } catch (err) {
-      setSubmitError('Could not read your Google profile. Please try again.');
-      // eslint-disable-next-line no-console
-      console.error('Google JWT decode failed:', err);
+      setSubmitError('Google sign-in failed. Please try again.');
     }
   };
 
