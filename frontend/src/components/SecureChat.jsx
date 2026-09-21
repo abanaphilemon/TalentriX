@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   Video,
   LogOut,
+  Trash2,
 } from 'lucide-react';
 import { ensureKeys, decryptMessage, encryptMessage, formatWhen } from '../lib/e2e.js';
 
@@ -54,6 +55,7 @@ export default function SecureChat({ open, onClose, seedId, onLeaveChat }) {
   const [error, setError] = useState('');
   const [calling, setCalling] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [lf, setLf] = useState({ email: '', password: '', role: 'employer' });
   const [lfBusy, setLfBusy] = useState(false);
   const [lfError, setLfError] = useState('');
@@ -302,6 +304,37 @@ async (partnerId, showBusy) => {
 
   const canLeave = !!onLeaveChat && me?.role === 'employer';
 
+  // Remove this conversation from MY inbox only. It disappears here, but the
+  // other person keeps their copy (messages and all) until they remove it on
+  // their side too — a fresh message from either side brings it back.
+  const deleteThread = async () => {
+    if (!active?.partner?.id || deleting) return;
+    if (!window.confirm(
+      `Remove this conversation with ${active.partner.name} from your inbox? ` +
+      `${active.partner.name.split(' ')[0]} will still be able to see it unless they remove it too.`
+    )) return;
+    setDeleting(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_URL}/chat/thread/${active.partner.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.message || 'Could not remove this conversation. Please try again.');
+        return;
+      }
+      setThreads((prev) => prev.filter((t) => String(t.partner.id) !== String(active.partner.id)));
+      setActive(null);
+      await loadThreads();
+    } catch {
+      setError('Could not remove this conversation. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (!open) return null;
 
   return (
@@ -473,6 +506,15 @@ async (partnerId, showBusy) => {
                       className="ml-auto w-9 h-9 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 hover:text-secondary flex items-center justify-center transition-colors disabled:opacity-50 shrink-0"
                     >
                       {calling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Video className="w-4 h-4" />}
+                    </button>
+                    <button
+                      onClick={deleteThread}
+                      disabled={deleting}
+                      title="Remove this conversation from your inbox — the other person keeps their copy"
+                      aria-label="Remove conversation from my inbox"
+                      className="w-9 h-9 rounded-xl bg-secondary/5 text-secondary/60 hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                     </button>
                     {canLeave && (
                       <button

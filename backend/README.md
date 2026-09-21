@@ -175,6 +175,7 @@ All models are defined in `server.js`.
 | `GET` | `/api/payment/my-payments` | My payment history |
 | `GET` | `/api/payment/verify/:paymentRef` | Verify payment status |
 | `POST` | `/api/chat/leave` | Leave chat (triggers closure + lock) |
+| `DELETE` | `/api/chat/thread/:id` | Remove a conversation from my inbox only (partner's copy is untouched) |
 | `GET` | `/api/employer/chat-closures/pending` | Pending closure records |
 | `POST` | `/api/employer/chat-closures/:id/answer` | Answer closure (employed? post templates?) |
 | `GET` | `/api/employer/reviewables` | Talents I've unlocked that can be reviewed |

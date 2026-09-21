@@ -487,6 +487,15 @@ const userSchema = new mongoose.Schema({
   pubkey: { type: String, default: '' },
   e2ePriv: { type: String, default: '' },
 
+  // Conversations this user removed from their own inbox. Removing a thread is
+  // strictly per-user: it only hides the chat on this side — the other party
+  // keeps their copy (and can keep reading it) until they remove theirs too. A
+  // fresh message from either side brings the thread back for both users.
+  hiddenThreads: [{
+    partner: mongoose.Schema.Types.ObjectId,
+    at: { type: Date, default: Date.now },
+  }],
+
   // Hub-specific: unique invite code used in the shared registration link
   hubRef: { type: String, default: null },
 
@@ -653,6 +662,30 @@ async function hubNameMapFor(userDocs) {
 function chatPairOk(a, b) {
   const roles = new Set([a.role, b.role]);
   return roles.has('employer') && roles.has('seeker');
+}
+
+// Hide a conversation in one user's own inbox only. Partner keeps everything.
+async function hideThread(userId, partnerId) {
+  const u = await User.findById(userId);
+  if (!u) return;
+  if (!(u.hiddenThreads || []).some((h) => String(h.partner) === String(partnerId))) {
+    u.hiddenThreads.push({ partner: partnerId });
+    u.markModified('hiddenThreads');
+    await u.save();
+  }
+}
+
+// Bring a removed conversation back for a user (called when a new message
+// arrives in either direction so no incoming message ever gets lost).
+async function unhideThread(userId, partnerId) {
+  const u = await User.findById(userId);
+  if (!u || !(u.hiddenThreads || []).length) return;
+  const before = u.hiddenThreads.length;
+  u.hiddenThreads = (u.hiddenThreads || []).filter((h) => String(h.partner) !== String(partnerId));
+  if (u.hiddenThreads.length !== before) {
+    u.markModified('hiddenThreads');
+    await u.save();
+  }
 }
 
 const SiteContent = mongoose.model('SiteContent', new mongoose.Schema({
@@ -1685,10 +1718,16 @@ app.put('/api/chat/keys', authenticateToken, async (req, res) => {
 app.get('/api/chat/threads', authenticateToken, async (req, res) => {
   try {
     const me = req.user.userId;
+    const meDoc = await User.findById(me).select('hiddenThreads');
+    if (!meDoc) return res.status(404).json({ message: 'User not found' });
+    // Conversations the user removed from their inbox are not listed. This is
+    // a per-user hide — the partner's copy of the thread is unaffected.
+    const hidden = new Set((meDoc.hiddenThreads || []).map((h) => String(h.partner)));
     const msgs = await Message.find({ $or: [{ from: me }, { to: me }] }).sort({ createdAt: 1 });
     const byOther = new Map();
     for (const m of msgs) {
       const other = String(m.from) === me ? String(m.to) : String(m.from);
+      if (hidden.has(other)) continue;
       const entry = byOther.get(other) || { unread: 0, lastAt: m.createdAt };
       if (!byOther.has(other)) byOther.set(other, entry);
       if (m.createdAt > entry.lastAt) entry.lastAt = m.createdAt;
@@ -1721,10 +1760,17 @@ app.get('/api/chat/threads', authenticateToken, async (req, res) => {
   }
 });
 
-// Total unread count (for the dashboard badge).
+// Total unread count (for the dashboard badge). Messages in conversations the
+// user removed from their inbox don't count any more.
 app.get('/api/chat/unread', authenticateToken, async (req, res) => {
   try {
-    const count = await Message.countDocuments({ to: req.user.userId, read: false });
+    const me = await User.findById(req.user.userId).select('hiddenThreads');
+    const fromHidden = (me?.hiddenThreads || []).map((h) => h.partner);
+    const count = await Message.countDocuments({
+      to: req.user.userId,
+      read: false,
+      from: { $nin: fromHidden },
+    });
     res.json({ count });
   } catch (error) {
     console.error('Chat unread error:', error);
@@ -1778,6 +1824,27 @@ app.get('/api/chat/thread/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Remove a conversation from YOUR OWN inbox only. The other party keeps the
+// thread and its message history until they remove it on their side too, so
+// talents can always keep reading what was said after an employer leaves or
+// cleans up their message box. A new message from either side brings the
+// conversation back for both users.
+app.delete('/api/chat/thread/:id', authenticateToken, async (req, res) => {
+  try {
+    const me = await User.findById(req.user.userId);
+    const partner = await User.findById(req.params.id).select('_id');
+    if (!me || !partner) return res.status(404).json({ message: 'User not found' });
+    if (!chatPairOk(me, partner)) {
+      return res.status(403).json({ message: 'Chats are available between employers and job seekers only' });
+    }
+    await hideThread(me._id, partner._id);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Chat delete error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Send one encrypted message (iv + ct only — the server can't read it).
 app.post('/api/chat/messages', authenticateToken, async (req, res) => {
   try {
@@ -1812,6 +1879,10 @@ app.post('/api/chat/messages', authenticateToken, async (req, res) => {
     await provisionKeys(other);
 
     const msg = await Message.create({ from: me._id, to: other._id, iv, ct });
+    // A fresh message un-hides the thread for both sides so a conversation the
+    // receiver removed from their inbox can never silently swallow new mail.
+    await unhideThread(me._id, other._id);
+    await unhideThread(other._id, me._id);
     res.status(201).json({
       message: { id: msg._id, from: msg.from, to: msg.to, iv: msg.iv, ct: msg.ct, createdAt: msg.createdAt },
     });
