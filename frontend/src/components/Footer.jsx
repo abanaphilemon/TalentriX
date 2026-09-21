@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Sparkles, Send } from 'lucide-react';
+import { Sparkles, Send, Smartphone } from 'lucide-react';
 import { useContent } from '../context/ContentContext.jsx';
+import PwaInstall from './PwaInstall.jsx';
 
 // Reusable link column heading
 const ColumnTitle = ({ children }) => (
@@ -29,6 +30,20 @@ export default function Footer() {
   return (
     <footer className="relative bg-secondary text-tertiary pt-20 pb-6 mt-10">
       <div className="container-x px-6 md:px-10 lg:px-16">
+        {/* ───── App download banner ───── */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-6 py-5 mb-10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0">
+              <Smartphone className="w-5 h-5 text-secondary" />
+            </div>
+            <div>
+              <p className="font-display font-bold text-tertiary">Take TalentriX with you</p>
+              <p className="text-sm text-white/60">Install the app on your phone for popup notifications, offline access and one-tap messaging.</p>
+            </div>
+          </div>
+          <PwaInstall />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 mb-12">
           {/* ───── Brand column ───── */}
           <div>

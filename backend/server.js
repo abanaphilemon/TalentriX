@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 
 const nodemailer = require('nodemailer');
+const webpush = require('web-push');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -2011,6 +2012,53 @@ app.post('/api/chat/messages', authenticateToken, async (req, res) => {
     // receiver removed from their inbox can never silently swallow new mail.
     await unhideThread(me._id, other._id);
     await unhideThread(other._id, me._id);
+
+    // When an employer messages a talent for the first time after paying, the
+    // talent gets a bell notification + email so they know someone reached out.
+    let isFirstMessage = false;
+    if (me.role === 'employer' && other.role === 'seeker') {
+      const threadCount = await Message.countDocuments({
+        $or: [{ from: me._id, to: other._id }, { from: other._id, to: me._id }],
+      });
+      isFirstMessage = threadCount === 1;
+      if (isFirstMessage) {
+        const employerName = displayName(me, 'An employer');
+        await Notification.create({
+          userId: other._id,
+          type: 'chat_start',
+          title: `${employerName} just messaged you`,
+          body: `You have a new private chat from ${employerName} on TalentriX. Open your dashboard to reply.`,
+          payload: { employerId: String(me._id), seekerId: String(other._id), employerName },
+        });
+        if (other.email) {
+          void sendMail({
+            to: other.email,
+            subject: `New message from ${employerName} on TalentriX`,
+            html: emailShell('New message from an employer', `
+              <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${(other.name || 'there').split(' ')[0]},</p>
+              <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;"><strong>${employerName}</strong> just sent you a private message on TalentriX — an employer is interested in talking to you.</p>
+              <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Open your dashboard to read the message and reply when you're ready.</p>
+              <a href="${FRONTEND_URL}/dashboard/seeker" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open your dashboard</a>`),
+          });
+        }
+      }
+    }
+
+    // Pop the incoming message on the recipient's phone (PWA). E2E text stays
+    // encrypted on the server, so the popup is a generic preview + tap-through.
+    const senderName = displayName(me, 'someone');
+    void webPushTo(other._id, {
+      title: isFirstMessage
+        ? `You have a new private chat from ${senderName}`
+        : `New message from ${senderName}`,
+      body: isFirstMessage
+        ? 'An employer reached out — open your dashboard to reply.'
+        : 'You have a new message in your TalentriX chat.',
+      type: 'chat_message',
+      payload: { fromId: String(me._id), toId: String(other._id) },
+      url: other.role === 'seeker' ? '/dashboard/seeker?tab=chat' : '/dashboard/employer?tab=chat',
+    });
+
     res.status(201).json({
       message: { id: msg._id, from: msg.from, to: msg.to, iv: msg.iv, ct: msg.ct, createdAt: msg.createdAt },
     });
@@ -2991,6 +3039,18 @@ const Notification = mongoose.model('Notification', new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
 }));
 
+// A browser/device's Web Push subscription. One row per endpoint so the same
+// person can get popups on their phone, tablet and laptop at once.
+const PushSubscription = mongoose.model('PushSubscription', new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  endpoint: { type: String, required: true, unique: true },
+  p256dh: { type: String, required: true },
+  auth: { type: String, required: true },
+  userAgent: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+}));
+
 // Instant attacker-free chat calls between an employer and a job seeker.
 // Created on demand from the secure chat (no scheduling), reusing the same
 // polled-signaling WebRTC model as admin interviews.
@@ -3068,6 +3128,88 @@ async function setConfig(key, value) {
   await SiteConfig.findOneAndUpdate({ key }, { key, value }, { upsert: true });
 }
 
+// ── Web Push (PWA popup notifications) ───────────────────────────────────────
+// VAPID keys are generated once and stored in SiteConfig('push'), so the front
+// end can ask for the public key and the backend can sign every message it
+// sends to registered devices (Android/iOS/desktop PWA).
+async function getVapid() {
+  let cfg = (await getConfig('push')) || {};
+  if (!cfg.publicKey || !cfg.privateKey) {
+    const keys = webpush.generateVAPIDKeys();
+    cfg = { publicKey: keys.publicKey, privateKey: keys.privateKey, createdAt: new Date() };
+    await setConfig('push', cfg).catch(() => {});
+  }
+  return cfg;
+}
+
+// Which dashboard section a notification type should open when tapped.
+function notificationUrlFor(type) {
+  switch (type) {
+    case 'payment_receipt': return '/dashboard/employer';
+    case 'hired': return '/dashboard/seeker?tab=chat';
+    case 'chat_message': return '/dashboard/seeker?tab=chat';
+    case 'support': return '/';
+    default: return '/';
+  }
+}
+
+// Fire a phone popup for a registered device. Best-effort and fire-and-forget:
+// missing/expired subscriptions are quietly cleaned up so it never interferes
+// with the request that triggered it.
+async function webPushTo(userId, { title, body, type = 'notify', payload = {}, url = '/' } = {}) {
+  try {
+    if (!userId || !title) return;
+    const subs = await PushSubscription.find({ userId }).lean();
+    if (!subs.length) return;
+    const vapid = await getVapid();
+    if (!vapid?.publicKey || !vapid?.privateKey) return;
+    const options = {
+      TTL: 7 * 24 * 3600,
+      vapidDetails: {
+        subject: 'mailto:noreply@talentri-x.vercel.app',
+        publicKey: vapid.publicKey,
+        privateKey: vapid.privateKey,
+      },
+    };
+    const data = JSON.stringify({ title, body, type, url, payload });
+    for (const sub of subs) {
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          data,
+          options,
+        );
+      } catch (err) {
+        if (err?.statusCode === 404 || err?.statusCode === 410) {
+          await PushSubscription.deleteOne({ _id: sub._id }).catch(() => {});
+        } else if (err?.statusCode < 500) {
+          // 400-level (e.g. bad payload / bad endpoint for this browser):
+          // the subscription is unusable — drop it and move on.
+          await PushSubscription.deleteOne({ _id: sub._id }).catch(() => {});
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Web push error:', e.message);
+  }
+}
+
+// Create an in-app bell notification AND pop it on the user's phones at once.
+// Accepts Notification fields plus an optional pushUrl override.
+async function deliverNotification(userId, notif) {
+  if (!userId) return null;
+  const { pushUrl, ...rest } = notif || {};
+  const doc = await Notification.create({ userId, ...rest });
+  void webPushTo(userId, {
+    title: rest.title || 'TalentriX',
+    body: rest.body || '',
+    type: rest.type || 'notify',
+    payload: rest.payload || {},
+    url: pushUrl || notificationUrlFor(rest.type || ''),
+  });
+  return doc;
+}
+
 const MONNIFY_BASE_PROD = 'https://api.monnify.com';
 const MONNIFY_BASE_SANDBOX = 'https://sandbox.monnify.com';
 
@@ -3108,6 +3250,75 @@ async function accrueHubCommission(payment) {
   });
 }
 
+// Flip a ChatPayment to 'paid' exactly once. The commission on the base fee is
+// accrued and the employer's receipt (bell notification + receipt email) is
+// sent on the transition, so repeated webhook/verify calls never duplicate.
+async function markPaymentPaid(record, monnifyRef) {
+  const wasPaid = record.status === 'paid';
+  record.status = 'paid';
+  if (monnifyRef) record.monnifyRef = monnifyRef;
+  record.paidAt = new Date();
+  await record.save();
+  if (!wasPaid) {
+    await accrueHubCommission(record);
+    await sendPaymentReceipt(record);
+  }
+}
+
+// Deliver the employer's payment receipt: an in-app bell notification plus a
+// receipt email with the paid amount, base fee, taxes and reference.
+async function sendPaymentReceipt(record) {
+  if (!record || !record._id || record.status !== 'paid') return;
+  const existing = await Notification.findOne({
+    userId: record.employerId,
+    type: 'payment_receipt',
+    'payload.paymentId': String(record._id),
+  });
+  if (existing) return;
+
+  const [employer, seeker] = await Promise.all([
+    User.findById(record.employerId).select('name email company'),
+    User.findById(record.seekerId).select('name title'),
+  ]);
+  if (!employer?.email) return;
+
+  const employerName = displayName(employer, 'you');
+  const seekerName = seeker?.name || 'the talent';
+  const amount = record.amount || 0;
+  const base = record.baseAmount ?? amount;
+  const fees = Math.max(0, Math.round((amount - base) * 100) / 100);
+  const naira = (n) => '₦' + Number(n || 0).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const when = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(record.paidAt || new Date());
+
+  await deliverNotification(record.employerId, {
+    type: 'payment_receipt',
+    title: 'Payment receipt',
+    body: `Your payment of ${naira(amount)} for a private chat with ${seekerName} is confirmed.${record.paymentRef ? ` Reference ${record.paymentRef}.` : ''}`,
+    payload: { paymentId: String(record._id), paymentRef: record.paymentRef || '', seekerName, amount },
+    pushUrl: '/dashboard/employer',
+  });
+
+  void sendMail({
+    to: employer.email,
+    subject: 'Receipt — your TalentriX chat payment',
+    html: emailShell('Payment receipt', `
+      <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${employerName},</p>
+      <p style="margin:0 0 18px;color:#4b5262;font-size:14px;line-height:1.6;">Your payment to open a private chat with <strong>${seekerName}</strong> was successful. Here is your receipt:</p>
+      <table role="presentation" width="100%" cellpadding="8" style="border-collapse:collapse;font-size:14px;color:#4b5262;margin-bottom:20px;">
+        <tr><td style="border-bottom:1px solid #eee;color:#8a90a0;">Talent</td><td align="right" style="border-bottom:1px solid #eee;font-weight:bold;color:#141921;">${seekerName}</td></tr>
+        <tr><td style="border-bottom:1px solid #eee;color:#8a90a0;">Base unlock fee</td><td align="right" style="border-bottom:1px solid #eee;">${naira(base)}</td></tr>
+        <tr><td style="border-bottom:1px solid #eee;color:#8a90a0;">VAT &amp; service charge</td><td align="right" style="border-bottom:1px solid #eee;">${naira(fees)}</td></tr>
+        <tr><td style="border-bottom:1px solid #eee;color:#8a90a0;font-weight:bold;">Total paid</td><td align="right" style="border-bottom:1px solid #eee;font-weight:bold;color:#141921;font-size:16px;">${naira(amount)}</td></tr>
+        <tr><td style="border-bottom:1px solid #eee;color:#8a90a0;">Reference</td><td align="right" style="border-bottom:1px solid #eee;font-family:monospace;font-size:12px;">${record.paymentRef || '—'}</td></tr>
+        <tr><td style="color:#8a90a0;">Date</td><td align="right">${when}</td></tr>
+      </table>
+      <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">The chat with <strong>${seekerName}</strong> is now unlocked in your dashboard, and you can review this receipt there any time.</p>
+      <a href="${FRONTEND_URL}/dashboard/employer" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open your dashboard</a>`),
+  });
+}
+
 // Query Monnify for a single transaction and update the local record's status.
 // Returns 'paid'/'failed' when confirmed, otherwise null (unknown/unreachable).
 async function syncPayment(record) {
@@ -3124,11 +3335,7 @@ async function syncPayment(record) {
   const d = await res.json();
   const tx = d.responseBody;
   if (tx?.paymentStatus === 'PAID') {
-    record.status = 'paid';
-    record.monnifyRef = tx.transactionReference || '';
-    record.paidAt = new Date();
-    await record.save();
-    await accrueHubCommission(record);
+    await markPaymentPaid(record, tx.transactionReference || '');
     return 'paid';
   }
   if (tx?.paymentStatus === 'FAILED') {
@@ -4674,11 +4881,7 @@ app.post('/api/payment/webhook', async (req, res) => {
 
     const status = body.eventData?.paymentStatus || body.paymentStatus;
     if (status === 'PAID') {
-      record.status = 'paid';
-      record.monnifyRef = body.eventData?.transactionReference || '';
-      record.paidAt = new Date();
-      await record.save();
-      await accrueHubCommission(record);
+      await markPaymentPaid(record, body.eventData?.transactionReference || '');
     } else if (status === 'FAILED') {
       record.status = 'failed';
       await record.save();
@@ -4793,12 +4996,60 @@ app.post('/api/employer/chat-closures/:id/answer', authenticateToken, async (req
     closure.status = 'done';
     await closure.save();
 
-    if (closure.postAgreed) {
-      const seeker = await User.findById(closure.seekerId).select('name title hubId');
-      const employer = await User.findById(closure.employerId).select('name company');
-      const hub = seeker?.hubId ? await User.findById(seeker.hubId).select('name company') : null;
-      const employerName = displayName(employer, 'our team');
+    const seeker = await User.findById(closure.seekerId).select('name title hubId email');
+    const employer = await User.findById(closure.employerId).select('name company email');
+    const hub = seeker?.hubId ? await User.findById(seeker.hubId).select('name company email') : null;
+    const employerName = displayName(employer, 'our team');
+    const seekerName = seeker?.name || 'a talent';
 
+    // Hired notice — separate from the post-templates flow. When the employer
+    // confirms they hired the talent, the talent and their hub get a bell
+    // notification and an email, regardless of whether a post is being shared.
+    if (closure.employed) {
+      await Promise.all([
+        deliverNotification(closure.seekerId, {
+          type: 'hired',
+          title: 'You were hired!',
+          body: `${employerName} confirmed they hired you. Congratulations! The chat stays open for you to keep building the relationship.`,
+          payload: { closureId: String(closure._id), employerName, seekerName },
+          pushUrl: '/dashboard/seeker?tab=chat',
+        }),
+        hub
+          ? deliverNotification(hub._id, {
+              type: 'hired',
+              title: 'Your pool member was hired',
+              body: `${employerName} hired ${seekerName} — your talent network keeps growing.`,
+              payload: { closureId: String(closure._id), employerName, seekerName },
+              pushUrl: '/dashboard/hub?tab=pool',
+            })
+          : Promise.resolve(),
+      ]);
+
+      if (seeker?.email) {
+        void sendMail({
+          to: seeker.email,
+          subject: 'Congratulations — you were hired!',
+          html: emailShell('You were hired!', `
+            <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${seekerName.split(' ')[0] || 'there'},</p>
+            <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;"><strong>${employerName}</strong> confirmed through TalentriX that they hired you. Congratulations!</p>
+            <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">Your private chat stays open — keep in touch and build on this opportunity. Your hub will also see the good news on their dashboard.</p>
+            <a href="${FRONTEND_URL}/dashboard/seeker?tab=chat" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open your dashboard</a>`),
+        });
+      }
+      if (hub?.email) {
+        void sendMail({
+          to: hub.email,
+          subject: `Your talent ${seekerName} was hired`,
+          html: emailShell('A hire from your pool', `
+            <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;">Hi ${hub.company || hub.name || 'there'},</p>
+            <p style="margin:0 0 16px;color:#4b5262;font-size:14px;line-height:1.6;"><strong>${employerName}</strong> hired <strong>${seekerName}</strong> from your talent pool. Another success story for the network.</p>
+            <p style="margin:0 0 22px;color:#4b5262;font-size:14px;line-height:1.6;">This also strengthens your reputation — keep bringing in more talent!</p>
+            <a href="${FRONTEND_URL}/dashboard/hub" style="display:inline-block;padding:12px 22px;background:#f5c518;color:#141921;text-decoration:none;font-weight:bold;border-radius:10px;font-size:14px;">Open your dashboard</a>`),
+        });
+      }
+    }
+
+    if (closure.postAgreed) {
       const notifications = [];
 
       const employerTemplates = await buildPostTemplates(closure, 'employer');
@@ -4812,7 +5063,14 @@ app.post('/api/employer/chat-closures/:id/answer', authenticateToken, async (req
         notifications.push(buildClosureNotification({ recipientId: hub._id, perspective: 'hub', seeker, employerName, templates: hubTemplates }));
       }
 
-      await Notification.insertMany(notifications);
+      await Promise.all(
+        notifications.map((n) =>
+          deliverNotification(n.userId, {
+            ...n,
+            pushUrl: n.type === 'post_templates' ? '/' : '/',
+          }),
+        ),
+      );
     }
     res.json({ ok: true });
   } catch (error) {
@@ -4857,6 +5115,71 @@ app.post('/api/notifications/read-all', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Web Push subscriptions (PWA popup notifications) ─────────────────────────
+
+// Public VAPID key — any browser reads this before subscribing, so it needs no
+// auth. The matching private key lives server-side only.
+app.get('/api/push/vapid-public-key', async (req, res) => {
+  try {
+    const vapid = await getVapid();
+    res.json({ publicKey: vapid.publicKey });
+  } catch (error) {
+    console.error('Push key error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Save a device subscription for the logged-in user (upsert by endpoint so
+// re-subscribing never duplicates).
+app.post('/api/push/subscribe', authenticateToken, async (req, res) => {
+  try {
+    const { subscription } = req.body || {};
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ message: 'Invalid subscription' });
+    }
+    await PushSubscription.findOneAndUpdate(
+      { endpoint },
+      {
+        userId: req.user.userId,
+        endpoint,
+        p256dh,
+        auth,
+        userAgent: String(req.get('user-agent') || '').slice(0, 300),
+        updatedAt: new Date(),
+      },
+      { upsert: true },
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Push subscribe error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Remove a device subscription (optional endpoint; without one, removes all of
+// this user's devices — used by sign out).
+app.delete('/api/push/subscribe', authenticateToken, async (req, res) => {
+  try {
+    const endpoint = req.query.endpoint;
+    if (endpoint && typeof endpoint === 'string' && endpoint.startsWith('https://')) {
+      await PushSubscription.deleteOne({ endpoint });
+    } else if (req.query.all === 'true') {
+      await PushSubscription.deleteMany({ userId: req.user.userId });
+    } else if (endpoint) {
+      return res.status(400).json({ message: 'Invalid endpoint' });
+    } else {
+      await PushSubscription.deleteMany({ userId: req.user.userId });
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Push unsubscribe error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ── Customer support tickets ─────────────────────────────────────────────────
 
 const SUPPORT_CATEGORIES = ['bug', 'account', 'payment', 'chat', 'interview', 'other'];
@@ -4881,12 +5204,12 @@ app.post('/api/support/tickets', authenticateToken, async (req, res) => {
       messages: [{ from: 'user', body: String(message).trim().slice(0, 4000) }],
     });
 
-    await Notification.create({
-      userId: req.user.userId,
+    await deliverNotification(req.user.userId, {
       type: 'support',
       title: 'Support ticket received',
       body: ticket.subject,
       payload: { ticketId: ticket._id },
+      pushUrl: '/',
     });
 
     res.status(201).json({ ticket: ticketInfo(ticket) });
@@ -5005,12 +5328,12 @@ app.post('/api/admin/support/tickets/:id/messages', authenticateToken, async (re
     ticket.updatedAt = new Date();
     await ticket.save();
 
-    await Notification.create({
-      userId: ticket.userId,
+    await deliverNotification(ticket.userId, {
       type: 'support',
       title: 'Support reply',
       body: ticket.subject,
       payload: { ticketId: ticket._id },
+      pushUrl: '/',
     });
 
     res.json({ ticket: ticketInfo(ticket) });
@@ -5041,12 +5364,12 @@ app.patch('/api/admin/support/tickets/:id', authenticateToken, async (req, res) 
 
     ticket.updatedAt = new Date();
     await ticket.save();
-    await Notification.create({
-      userId: ticket.userId,
+    await deliverNotification(ticket.userId, {
       type: 'support',
       title: 'Support ticket updated',
       body: ticket.subject,
       payload: { ticketId: ticket._id },
+      pushUrl: '/',
     });
 
     res.json({ ticket: ticketInfo(ticket) });
@@ -5499,7 +5822,7 @@ async function runSkillDemandAnalysis(tr) {
       body: `A new employer request for ${role} requires skills not on your profile yet: ${a.missingItems.join(', ')}. Update your profile or learn these skills so you appear in new matches.${analysis.marketNote ? ' ' + analysis.marketNote : ''}`,
       payload: { requestId: tr._id, role, missingItems: a.missingItems, marketNote: analysis.marketNote },
     }));
-    if (talentNotifs.length) await Notification.insertMany(talentNotifs);
+    if (talentNotifs.length) await Promise.all(talentNotifs.map((n) => deliverNotification(n.userId, n)));
 
     // 2) Notify each unique hub attached to those talents.
     const hubIds = [...new Set(affected.map((a) => String(a.user.hubId)).filter(Boolean))];
@@ -5513,30 +5836,26 @@ async function runSkillDemandAnalysis(tr) {
         payload: { requestId: tr._id, role, skills: demanded, marketNote: analysis.marketNote },
       });
     }
-    if (hubNotifs.length) await Notification.insertMany(hubNotifs);
+    if (hubNotifs.length) await Promise.all(hubNotifs.map((n) => deliverNotification(n.userId, n)));
 
     // 3) Auto-publish/refresh a learning module for this role from the demand.
     let moduleId = null;
     const module = await upsertLearningModuleForDemand(tr.role || '', demanded, analysis.marketNote);
     if (module) {
       moduleId = module._id;
-      for (const hubId of hubIds) {
-        await Notification.create({
-          userId: hubId,
-          type: 'learning_module',
-          title: `New learning module published: ${role}`,
-          body: `A learning module for ${role} is ready — based on a live employer request. Open the Learning Modules tab to view courses and resources.`,
-          payload: { requestId: tr._id, moduleId: module._id, role },
-        });
-      }
+      await Promise.all(hubIds.map((hubId) => deliverNotification(hubId, {
+        type: 'learning_module',
+        title: `New learning module published: ${role}`,
+        body: `A learning module for ${role} is ready — based on a live employer request. Open the Learning Modules tab to view courses and resources.`,
+        payload: { requestId: tr._id, moduleId: module._id, role },
+      })));
     }
 
     // 4) Admin: flag anything the AI couldn't validate as a real requirement.
     if (analysis.irrelevant.length) {
       const admin = await User.findOne({ role: 'admin' });
       if (admin) {
-        await Notification.create({
-          userId: admin._id,
+        await deliverNotification(admin._id, {
           type: 'demand_anomaly',
           title: `Suspicious skills flagged in a ${role} request`,
           body: `An employer request for ${role} listed: ${analysis.irrelevant.join(', ')} — the AI does not recognise these as real requirements for that role.`,
@@ -6167,11 +6486,11 @@ app.post('/api/ai/apply/send', authenticateToken, async (req, res) => {
     }
 
     const sent = await Application.create({ ...record, toEmail: target, method: 'email', status: 'sent', sentAt: new Date() });
-    await Notification.create({
-      userId: user._id,
+    await deliverNotification(user._id, {
       type: 'application',
       title: 'Application sent',
       body: `Your application for ${job.title || 'the role'}${job.company ? ' at ' + job.company : ''} was emailed from ${conn.email}.`,
+      pushUrl: '/',
     });
     res.json({ application: publicApplication(sent), method: 'email' });
   } catch (error) {

@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Check, Copy, Download, Loader2, X } from 'lucide-react';
+import { Bell, Check, Copy, Download, Loader2, X, Award, CreditCard, FileText, MessageSquare } from 'lucide-react';
+import { isStandalone } from '../lib/push.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
+
+// Distinct icon per notification type so receipts and hire notices stand out.
+const NOTIF_ICONS = {
+  payment_receipt: CreditCard,
+  hired: Award,
+  chat_start: MessageSquare,
+  post_templates: FileText,
+};
 
 // Scale an injected inline SVG to fill its container (the design is authored at
 // a fixed 1080×1080 size so it also downloads cleanly as a PNG).
@@ -49,6 +58,7 @@ export default function NotificationCenter({ token }) {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(null);
   const panelRef = useRef(null);
+  const seenIds = useRef(new Set());
 
   const load = async (showSpinner = false) => {
     if (!token) return;
@@ -59,8 +69,32 @@ export default function NotificationCenter({ token }) {
       });
       if (res.ok) {
         const d = await res.json();
-        setNotifs(d.notifications || []);
-        setUnread((d.notifications || []).filter((n) => !n.read).length);
+        const list = d.notifications || [];
+        setNotifs(list);
+        setUnread(list.filter((n) => !n.read).length);
+
+        // Inside the installed (standalone) app, newly-arrived unread notices
+        // pop up even before the server push lands — belt & braces for phones.
+        const fresh = list.filter((n) => !n.read && !seenIds.current.has(n._id));
+        for (const n of fresh) seenIds.current.add(n._id);
+        if (
+          fresh.length &&
+          isStandalone() &&
+          'Notification' in window &&
+          Notification.permission === 'granted'
+        ) {
+          for (const n of fresh.slice(0, 3)) {
+            try {
+              new Notification(n.title || 'TalentriX', {
+                body: n.body || '',
+                icon: '/icons/icon-192.png',
+                tag: `talentrix-${n._id}`,
+              });
+            } catch {
+              // ignore
+            }
+          }
+        }
       }
     } catch {
       // ignore
@@ -160,11 +194,13 @@ export default function NotificationCenter({ token }) {
                 You're all caught up.
               </div>
             ) : (
-              notifs.map((n) => (
+              notifs.map((n) => {
+                const Icon = NOTIF_ICONS[n.type] || Check;
+                return (
                 <div key={n._id} className="px-4 py-4 border-b border-secondary/5">
                   <div className="flex items-start gap-3">
                     <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      <Check className="w-4 h-4 text-secondary" />
+                      <Icon className="w-4 h-4 text-secondary" />
                     </div>
                     <div className="min-w-0">
                       <h4 className="font-semibold text-secondary text-sm">{n.title}</h4>
@@ -206,7 +242,8 @@ export default function NotificationCenter({ token }) {
                     </div>
                   ))}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

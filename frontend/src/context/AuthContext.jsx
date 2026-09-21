@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { ensureKeys } from '../lib/e2e.js';
+import { setupPush, teardownPush } from '../lib/push.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -85,6 +86,34 @@ export function AuthProvider({ children }) {
 
     rehydrate();
   }, []);
+
+  // Keep this device's push subscription in sync with the signed-in user:
+  // subscribe on login (every logged-in session), unsubscribe on sign out.
+  useEffect(() => {
+    const token = localStorage.getItem(STORAGE.token);
+    if (user && token) {
+      setupPush(token).catch(() => {});
+    } else if (!user && !adminUser) {
+      teardownPush(localStorage.getItem(STORAGE.token)).catch(() => {});
+    }
+  }, [user, adminUser]);
+
+  // Some browsers only allow the notification-permission prompt inside a user
+  // gesture — retry once on the first tap/keystroke of a logged-in session.
+  useEffect(() => {
+    if (!user) return undefined;
+    if (!('Notification' in window) || Notification.permission !== 'default') return undefined;
+    const attempt = () => {
+      const token = localStorage.getItem(STORAGE.token);
+      if (token) setupPush(token).catch(() => {});
+    };
+    window.addEventListener('pointerdown', attempt, { once: true });
+    window.addEventListener('keydown', attempt, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', attempt);
+      window.removeEventListener('keydown', attempt);
+    };
+  }, [user]);
 
   const openAuth = useCallback(() => {
     setMode('role');
@@ -327,6 +356,7 @@ export function AuthProvider({ children }) {
   }, [role, mode]);
 
   const signOut = useCallback(() => {
+    teardownPush(localStorage.getItem(STORAGE.token)).catch(() => {});
     localStorage.removeItem(STORAGE.token);
     localStorage.removeItem(STORAGE.role);
     setUser(null);

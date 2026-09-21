@@ -110,6 +110,7 @@ All models are defined in `server.js`.
 | `GET` | `/api/reviews` | Approved visitor reviews |
 | `POST` | `/api/reviews` | Submit a review (pending approval) |
 | `POST` | `/api/payment/webhook` | Monnify payment callback |
+| `GET` | `/api/push/vapid-public-key` | VAPID public key used to subscribe a device for popup notifications |
 
 ### Authenticated (any role)
 
@@ -140,6 +141,8 @@ All models are defined in `server.js`.
 | `GET` | `/api/notifications` | List notifications |
 | `POST` | `/api/notifications/read-all` | Mark all read |
 | `POST` | `/api/notifications/:id/read` | Mark one read |
+| `POST` | `/api/push/subscribe` | Register this device for popup notifications (Web Push) |
+| `DELETE` | `/api/push/subscribe` | Remove a device (`?endpoint=` optional; without it, removes all of the user's devices) |
 | `POST` | `/api/support/tickets` | Open a support ticket |
 | `GET` | `/api/support/tickets` | List my own tickets |
 | `GET` | `/api/support/tickets/:id` | View one of my tickets |
@@ -186,7 +189,7 @@ All models are defined in `server.js`.
 | `POST` | `/api/chat/leave` | Leave chat (triggers closure + lock) |
 | `DELETE` | `/api/chat/thread/:id` | Remove a conversation from my inbox only (partner's copy is untouched) |
 | `GET` | `/api/employer/chat-closures/pending` | Pending closure records |
-| `POST` | `/api/employer/chat-closures/:id/answer` | Answer closure (employed? post templates?) |
+| `POST` | `/api/employer/chat-closures/:id/answer` | Answer closure. `employed` fires a hire notice (bell + email) to talent & hub; `postAgreed` sends the shareable post templates |
 | `GET` | `/api/employer/reviewables` | Talents I've unlocked that can be reviewed |
 | `GET` | `/api/employer/reviews` | My reviews of talent |
 | `POST` | `/api/seekers/:id/review` | Create / update a review for an unlocked talent |
@@ -230,11 +233,20 @@ All models are defined in `server.js`.
 ### Secure Chat
 
 1. Employer pays a one-off fee via Monnify (`POST /api/payment/init` → redirect → webhook).
-2. Payment unlocks chat + call for that employer↔seeker pair.
+2. Payment unlocks chat + call for that employer↔seeker pair. On confirmation the employer receives a **receipt** (bell `payment_receipt` notification + receipt email), and the hub (if the seeker is a pool member) earns its 25% commission on the base fee.
 3. Both parties provision ECDH keypairs (`PUT /api/chat/keys`).
-4. Messages are encrypted client-side; server stores only `iv` + `ct` (AES-GCM ciphertext).
+4. Messages are encrypted client-side; server stores only `iv` + `ct` (AES-GCM ciphertext). The first time an employer messages a talent (after paying), the talent gets a **new message** bell notification + email (`chat_start`).
 5. Chat auto-locks after 48 hours idle or when the employer leaves (`POST /api/chat/leave`).
-6. Locking creates a `ChatClosure` record — the post-template sharing flow begins.
+6. Locking creates a `ChatClosure` record — when the employer answers it, `employed: true` sends a **hire notice** (bell `hired` + email) to the talent and hub, while `postAgreed: true` triggers the post-template sharing flow.
+
+### Popup Notifications (PWA)
+
+Every bell notification now also fires a **popup notification on the recipient's phone** (and other installed devices) via Web Push, so nothing is missed while the app is backgrounded or closed.
+
+1. The front end registers the service worker, asks for notification permission on login, and saves its device subscription with `POST /api/push/subscribe` (public key from `GET /api/push/vapid-public-key`).
+2. Notification-producing flows call a shared `deliverNotification(userId, notif)` + `webPushTo(...)` pair: bell notification **and** phone popup in one step. Live flows: `payment_receipt`, `hired` (talent + hub), `chat_start` (first employer message), incoming **chat messages** (`chat_message` popup to the recipient on every message), `support` (create/reply/status), `skill_gap` / `skill_gap_hub` / `learning_module` / `demand_anomaly` (AI demand analysis), and `application` (AI auto-apply sent).
+3. Tapping a popup opens the right dashboard section (`/dashboard/{role}?tab=…`).
+4. Expired/unreachable subscriptions (HTTP 404/410/4xx) are pruned automatically so dead devices never accumulate.
 
 ### Video Calls
 

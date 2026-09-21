@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, Sparkles, LogOut, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import PwaInstall from './PwaInstall.jsx';
 
 // Logo mark — brand logo (or "TB" fallback) with gold accent
 const LogoMark = ({ branding }) => {
@@ -156,6 +157,7 @@ export default function Header() {
 
           {/* Desktop CTA — user pill when signed in, "Get Started" when not */}
           <div className="hidden lg:flex items-center gap-3">
+            <PwaInstall compact />
             {user ? (
               <UserPill
                 user={user}
@@ -253,6 +255,10 @@ export default function Header() {
                     Get Started
                   </button>
                 )}
+
+                <div className="mt-3 flex justify-center">
+                  <PwaInstall />
+                </div>
               </div>
             </motion.div>
           )}
