@@ -238,6 +238,47 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Password reset — request an emailed reset code for an account (email +
+  // role, identical to how login resolves the account).
+  const requestPasswordReset = useCallback(async ({ email, role: roleOverride }) => {
+    try {
+      const res = await fetch(`${API_URL}/request-reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, role: roleOverride || role }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Could not request a reset code' };
+      }
+      return { ok: true, sent: data.sent };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [role]);
+
+  // Redeem the reset code and set a new password in one step.
+  const resetPassword = useCallback(async ({ code, email, role: roleOverride, password }) => {
+    try {
+      const res = await fetch(`${API_URL}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, email, role: roleOverride || role, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        return { ok: false, error: data.message || 'Could not reset your password' };
+      }
+      return { ok: true, message: data.message };
+    } catch (err) {
+      return { ok: false, error: 'Could not connect to server. Please try again.' };
+    }
+  }, [role]);
+
   // Google sign-in / sign-up. The raw ID token is verified server-side; new
   // emails are registered using the selected role (with the emailed code step)
   // and returning emails are logged into their existing account.
@@ -348,6 +389,8 @@ export function AuthProvider({ children }) {
     registerWithEmail,
     verifyOtp,
     resendOtp,
+    requestPasswordReset,
+    resetPassword,
     signOut,
     updateUser,
     adminLogin,

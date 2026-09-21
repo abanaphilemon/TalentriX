@@ -23,6 +23,7 @@ import { useContent } from '../context/ContentContext.jsx';
 import { useGoogleClient } from '../context/GoogleClientContext.jsx';
 import { roles } from '../data/content.js';
 import OtpEntry from './OtpEntry.jsx';
+import ResetPassword from './ResetPassword.jsx';
 
 // Inline Google "G" mark — used in the fallback button when GIS hasn't loaded
 const GoogleG = () => (
@@ -134,6 +135,7 @@ export default function AuthPage() {
   const [tab, setTab] = useState('login');    // 'login' | 'register'
   const [submitError, setSubmitError] = useState('');
   const [otp, setOtp] = useState(null);        // { purpose, email, sent, role } while the code step is open
+  const [resetView, setResetView] = useState(false); // forgot-password flow
 
   const { content } = useContent();
   const brandName = content.branding?.name || 'TalentriX';
@@ -152,6 +154,7 @@ export default function AuthPage() {
     if (mode === 'auth') {
       reset();
       setSubmitError('');
+      setResetView(false);
     }
   }, [mode, reset]);
 
@@ -338,6 +341,13 @@ export default function AuthPage() {
                     onBack={() => setOtp(null)}
                     title={otp.purpose === 'login' ? 'Check your inbox' : 'Verify your email'}
                   />
+                ) : resetView ? (
+                  <ResetPassword
+                    defaultEmail={getValues('email')}
+                    role={role}
+                    onDone={() => setResetView(false)}
+                    onBack={() => setResetView(false)}
+                  />
                 ) : (
                 <>
                 {/* Tabs */}
@@ -468,12 +478,13 @@ export default function AuthPage() {
 
                   {tab === 'login' && (
                     <div className="flex justify-end">
-                      <a
-                        href="#"
-                        className="text-xs font-semibold text-secondary/70 hover:text-secondary"
+                      <button
+                        type="button"
+                        onClick={() => { setSubmitError(''); setResetView(true); }}
+                        className="text-xs font-semibold text-secondary/70 hover:text-secondary transition-colors"
                       >
                         Forgot password?
-                      </a>
+                      </button>
                     </div>
                   )}
 

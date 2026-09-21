@@ -1518,6 +1518,56 @@ app.post('/api/resend-otp', async (req, res) => {
   }
 });
 
+// ── Password reset ──────────────────────────────────────────────────────────
+
+// Request a password-reset code for an account (email + role, same as login).
+// We never reveal whether an account exists, so the response reads the same
+// for a real address and a stranger's.
+app.post('/api/request-reset', async (req, res) => {
+  try {
+    const { email, role } = req.body || {};
+    if (!email || !role) {
+      return res.status(400).json({ message: 'A valid email and role are required' });
+    }
+    const user = await User.findOne({ email: String(email).trim().toLowerCase(), role });
+    if (user) {
+      const { sent } = await sendOtpEmail(user, 'reset');
+      return res.json({ ok: true, sent });
+    }
+    res.json({ ok: true, sent: false });
+  } catch (error) {
+    console.error('Request reset error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Redeem a reset code and set a new password in one step. The code is the
+// emailed 6-digit one; it is consumed here and can't be reused.
+app.post('/api/reset-password', async (req, res) => {
+  try {
+    const { code, email, role, password } = req.body || {};
+    if (!code || !email || !role || !password) {
+      return res.status(400).json({ message: 'Code, email, role and a new password are required' });
+    }
+    if (String(password).length < 6) {
+      return res.status(400).json({ message: 'New password must be at least 6 characters' });
+    }
+    const user = await User.findOne({ email: String(email).trim().toLowerCase(), role });
+    if (!user) return res.status(404).json({ message: 'Account not found' });
+
+    const result = await checkOtp(user, String(code), 'reset');
+    if (!result.ok) return res.status(400).json({ message: result.error });
+
+    user.password = String(password);
+    await user.save(); // the pre('save') hook re-hashes it
+
+    res.json({ ok: true, message: 'Password updated. You can now sign in with your new password.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Middleware to verify token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];

@@ -118,6 +118,8 @@ All models are defined in `server.js`.
 | `GET` | `/api/dashboard` | Role-appropriate dashboard data |
 | `GET` | `/api/me` | Current user profile |
 | `GET` / `PUT` | `/api/profile` | Read / update own profile |
+| `POST` | `/api/request-reset` | Email a password-reset code (email + role) |
+| `POST` | `/api/reset-password` | Redeem a reset code and set a new password |
 | `GET` / `PUT` | `/api/chat/keys` | Get / provision E2E keypair |
 | `GET` | `/api/chat/threads` | List chat threads |
 | `GET` | `/api/chat/unread` | Unread message count |
