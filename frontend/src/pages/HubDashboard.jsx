@@ -27,12 +27,16 @@ import {
   Wand2,
   Globe,
   Clock,
+  Wallet,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import { readImageFile } from '../lib/image.js';
 import NotificationCenter from '../components/NotificationCenter.jsx';
 import SupportCenter from '../components/SupportCenter.jsx';
+import HubFinance from '../components/HubFinance.jsx';
+import AccountSettings from '../components/AccountSettings.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -219,10 +223,10 @@ function ModuleSummary({ module, openModule }) {
 }
 
 export default function HubDashboard() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, updateUser } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
-  const [tab, setTab] = useState('grants'); // 'grants' | 'talent' | 'learning' | 'profile'
+  const [tab, setTab] = useState('grants'); // 'grants' | 'talent' | 'learning' | 'profile' | 'finance' | 'settings'
   const [link, setLink] = useState('');
   const [count, setCount] = useState(0);
   const [seekers, setSeekers] = useState([]);
@@ -522,6 +526,26 @@ export default function HubDashboard() {
             }`}
           >
             <Building2 className="w-4 h-4" /> Profile
+          </button>
+          <button
+            onClick={() => setTab('finance')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'finance'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <Wallet className="w-4 h-4" /> Finance
+          </button>
+          <button
+            onClick={() => setTab('settings')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'settings'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <SettingsIcon className="w-4 h-4" /> Settings
           </button>
         </div>
 
@@ -999,6 +1023,12 @@ export default function HubDashboard() {
             </div>
           </div>
         )}
+
+        {/* ── Finance Tab (commission, reputation, payouts) ───────────── */}
+        {tab === 'finance' && <HubFinance token={token} />}
+
+        {/* ── Settings Tab (email / password) ────────────────────────── */}
+        {tab === 'settings' && <AccountSettings user={user} token={token} onUpdated={updateUser} />}
       </main>
 
       {/* Seeker detail modal */}

@@ -30,6 +30,7 @@ import {
   Github,
   Globe,
   Headset,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
@@ -38,6 +39,7 @@ import ChatClosureModal from '../components/ChatClosureModal.jsx';
 import NotificationCenter from '../components/NotificationCenter.jsx';
 import SupportCenter from '../components/SupportCenter.jsx';
 import EmployerRequestTalent from './EmployerRequestTalent.jsx';
+import AccountSettings from '../components/AccountSettings.jsx';
 import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -61,10 +63,10 @@ const inputCls =
   'w-full pl-10 pr-3 py-2.5 rounded-xl bg-white border border-secondary/10 focus:border-primary focus:ring-2 focus:ring-primary/30 outline-none transition-all';
 
 export default function EmployerDashboard() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, updateUser } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
-  const [tab, setTab] = useState('requestTalent'); // 'requestTalent' | 'seekers' | 'profile' — talent requests load first
+  const [tab, setTab] = useState('requestTalent'); // 'requestTalent' | 'seekers' | 'profile' | 'settings' — talent requests load first
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -607,6 +609,16 @@ export default function EmployerDashboard() {
           >
             <Target className="w-4 h-4" /> Request Talent
           </button>
+          <button
+            onClick={() => setTab('settings')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+              tab === 'settings'
+                ? 'bg-primary text-secondary shadow-md'
+                : 'text-secondary/60 hover:text-secondary'
+            }`}
+          >
+            <SettingsIcon className="w-4 h-4" /> Settings
+          </button>
         </div>
 
         {tab === 'profile' && (
@@ -1110,6 +1122,8 @@ export default function EmployerDashboard() {
       )}
 
       {tab === 'requestTalent' && <EmployerRequestTalent />}
+
+      {tab === 'settings' && <AccountSettings user={user} token={token} onUpdated={updateUser} />}
 
       {/* Secure end-to-end encrypted chat */}
       <SecureChat open={chatOpen} onClose={closeChat} seedId={chatSeed} onLeaveChat={handleLeaveChat} />

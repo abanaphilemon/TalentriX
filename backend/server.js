@@ -261,12 +261,12 @@ async function generateOtp(user, purpose) {
   return code;
 }
 
-async function sendOtpEmail(user, purpose) {
+async function sendOtpEmail(user, purpose, toEmail) {
   const code = await generateOtp(user, purpose);
   const isLogin = purpose === 'login';
   const subject = isLogin ? 'Your TalentriX login code' : 'Verify your TalentriX account';
   const html = otpEmailHtml(code, purpose);
-  const sent = await sendMail({ to: user.email, subject, html });
+  const sent = await sendMail({ to: toEmail || user.email, subject, html });
   // The code is only ever delivered to the account's email — it's never
   // returned to the client so the app can't leak it to the browser.
   return { sent };
@@ -284,6 +284,14 @@ const OTP_LOGIN_MSGS = {
   reset: {
     title: 'Password reset code',
     lead: 'Use the code below to reset your TalentriX password. The code expires in 10 minutes.',
+  },
+  payout: {
+    title: 'Confirm your payout account',
+    lead: 'Use the code below to confirm the payout account for your TalentriX hub balance. The code expires in 10 minutes.',
+  },
+  email: {
+    title: 'Confirm your new email',
+    lead: 'Use the code below to confirm your new email address. Once confirmed, future TalentriX codes and alerts go to this address. The code expires in 10 minutes.',
   },
 };
 
@@ -471,13 +479,16 @@ const userSchema = new mongoose.Schema({
   // require a fresh 6-digit code sent to the account email.
   emailVerified: { type: Boolean, default: false },
   twoFactorEnabled: { type: Boolean, default: false },
+  // Destination email requested when the user is mid-way through changing their
+  // account address. The change only lands once they verify an emailed code.
+  pendingEmail: { type: String, default: '' },
   // When the user accepted the Terms & Conditions during sign-up.
   termsAcceptedAt: { type: Date, default: null },
   // The single active OTP (bcrypt-hashed) for verification / 2FA / resets.
   otp: {
     hash: { type: String, default: '' },
     expires: { type: Date, default: null },
-    purpose: { type: String, enum: ['', 'verify', 'login', 'reset'], default: '' },
+    purpose: { type: String, enum: ['', 'verify', 'login', 'reset', 'payout', 'email'], default: '' },
     attempts: { type: Number, default: 0 },
   },
 
@@ -1654,6 +1665,73 @@ app.put('/api/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Account settings: change email / password ───────────────────────────────
+// Works for every authenticated role (hub, employer, seeker). Changing email
+// requires an emailed code sent to the *new* address so no one can hijack an
+// account by typing an email they don't control.
+
+app.post('/api/profile/email/request', authenticateToken, async (req, res) => {
+  try {
+    const clean = String(req.body?.newEmail || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) {
+      return res.status(400).json({ message: 'Enter a valid email address.' });
+    }
+    const clash = await User.findOne({ email: clean, _id: { $ne: req.user.userId } });
+    if (clash) return res.status(400).json({ message: 'That email is already in use by another account.' });
+    const user = await User.findById(req.user.userId);
+    user.pendingEmail = clean;
+    await user.save();
+
+    // The code is emailed to the NEW address to prove ownership of it.
+    await sendOtpEmail(user, 'email', clean);
+    res.json({ message: 'Verification code sent to your new email address.' });
+  } catch (error) {
+    console.error('Email change request error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/profile/email/confirm', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user.pendingEmail) {
+      return res.status(400).json({ message: 'No email change was requested.' });
+    }
+    const chk = await checkOtp(user, String(req.body?.code || ''), 'email');
+    if (!chk.ok) return res.status(400).json({ message: chk.error });
+    user.email = user.pendingEmail;
+    user.pendingEmail = '';
+    user.emailVerified = true;
+    await user.save();
+    res.json({ message: 'Email updated.', profile: publicUser(user) });
+  } catch (error) {
+    console.error('Email change confirm error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/profile/password', authenticateToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    const user = await User.findById(req.user.userId);
+    if (user.password) {
+      const matches = await bcrypt.compare(String(currentPassword || ''), user.password);
+      if (!matches) return res.status(400).json({ message: 'Current password is incorrect.' });
+    }
+    const next = String(newPassword || '');
+    if (next.length < 6) return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+    if (user.password && next === String(currentPassword || '')) {
+      return res.status(400).json({ message: 'New password must be different from your current one.' });
+    }
+    user.password = next; // hashed by the pre-save hook
+    await user.save();
+    res.json({ message: 'Password updated.' });
+  } catch (error) {
+    console.error('Password change error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Hub: get (or ensure) the hub's unique registration link
 app.get('/api/hub/link', authenticateToken, async (req, res) => {
   try {
@@ -2512,6 +2590,218 @@ app.delete('/api/hub/grants/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// ── Hub: Earnings / Payouts ─────────────────────────────────────────────────
+// A hub earns 25% of the base unlock fee for every paid chat with a member of
+// its pool, plus one reputation point per chat the employer confirms and agrees
+// to post. Commission is paid out to a Monnify-validated bank account that the
+// hub first confirms with an emailed code.
+
+app.get('/api/hub/finance', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const hubId = req.user.userId;
+
+    const seekers = await User.find({ role: 'seeker', hubId, status: 'approved', active: true }).select('_id');
+    const seekerIds = seekers.map((s) => s._id);
+
+    // Lazy backfill: any paid chat unlock that predates commission tracking
+    // earns the hub its 25% once queried. accrueHubCommission is idempotent.
+    const paidPayments = await ChatPayment.find({ status: 'paid', seekerId: { $in: seekerIds } }).select('_id');
+    for (const payment of paidPayments) await accrueHubCommission(payment);
+
+    const commission = { total: 0, pending: 0, withdrawn: 0, rate: 0.25 };
+    const rows = await HubEarning.aggregate([
+      { $match: { hubId } },
+      { $group: { _id: '$status', sum: { $sum: '$commissionAmount' } } },
+    ]);
+    for (const r of rows) {
+      if (r._id === 'pending') commission.pending = r.sum;
+      else if (r._id === 'withdrawn') commission.withdrawn = r.sum;
+      commission.total = commission.pending + commission.withdrawn;
+    }
+
+    const reputation = {
+      points: await ChatClosure.countDocuments({
+        seekerId: { $in: seekerIds },
+        postAgreed: true,
+        status: 'done',
+      }),
+    };
+
+    const earnings = await HubEarning.find({ hubId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('employerId', 'name company')
+      .populate('seekerId', 'name title');
+
+    const withdrawals = await HubWithdrawal.find({ hubId }).sort({ createdAt: -1 }).limit(30);
+    const account = await HubPayoutAccount.findOne({ hubId });
+
+    res.json({ commission, reputation, earnings, withdrawals, account });
+  } catch (error) {
+    console.error('Hub finance fetch error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Save (or replace) the payout account. The details are validated against
+// Monnify's account-name API when configured, and an emailed code is sent — the
+// account stays 'pending' until the hub confirms it.
+app.put('/api/hub/payout-account', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const { bankName, bankCode, accountNumber, accountName } = req.body || {};
+    if (!bankName || !bankCode || !accountNumber) {
+      return res.status(400).json({ message: 'Bank, bank code and account number are required.' });
+    }
+    const num = String(accountNumber).replace(/\D/g, '');
+    if (num.length < 10) return res.status(400).json({ message: 'Enter a valid 10-digit account number.' });
+
+    // Ask Monnify for the registered account name so the transfer lands on the
+    // right account. Falls back to the typed name when validation is unreachable.
+    let finalName = String(accountName || '').trim();
+    const cfg = await getConfig('monnify');
+    if (cfg?.apiKey && cfg?.secretKey) {
+      try {
+        const auth = await monnifyToken();
+        if (auth?.token) {
+          const vr = await fetch(`${auth.baseUrl}/api/v1/disbursements/account/validate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ destinationBankCode: String(bankCode), destinationAccountNumber: num }),
+          });
+          const vd = await vr.json();
+          if (vd.requestSuccessful && vd.responseBody?.accountName) {
+            finalName = vd.responseBody.accountName;
+          }
+        }
+      } catch {
+        // validation is best-effort — keep the typed name
+      }
+    }
+
+    const account = await HubPayoutAccount.findOneAndUpdate(
+      { hubId: req.user.userId },
+      { bankName: String(bankName), bankCode: String(bankCode), accountNumber: num, accountName: finalName, status: 'pending' },
+      { upsert: true, returnDocument: 'after' },
+    );
+    await sendOtpEmail(await User.findById(req.user.userId), 'payout');
+    res.json({ message: 'Code sent to your email — confirm to activate this account.', account });
+  } catch (error) {
+    console.error('Hub payout account error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Confirm the payout account with the emailed code, making it active.
+app.post('/api/hub/payout-account/confirm', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const { code } = req.body || {};
+    const user = await User.findById(req.user.userId);
+    const chk = await checkOtp(user, code, 'payout');
+    if (!chk.ok) return res.status(400).json({ message: chk.error });
+    const account = await HubPayoutAccount.findOne({ hubId: req.user.userId });
+    if (!account) return res.status(400).json({ message: 'Save your payout account first.' });
+    account.status = 'active';
+    account.verifiedAt = new Date();
+    await account.save();
+    res.json({ message: 'Payout account confirmed.', account });
+  } catch (error) {
+    console.error('Hub payout confirm error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Request a withdrawal of the available commission. The money is sent to the
+// active payout account via Monnify's disbursement API.
+app.post('/api/hub/withdraw', authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role !== 'hub') return res.status(403).json({ message: 'Hub access only' });
+    const hubId = req.user.userId;
+    const account = await HubPayoutAccount.findOne({ hubId, status: 'active' });
+    if (!account) {
+      return res.status(400).json({ message: 'Add and confirm a payout account before withdrawing.' });
+    }
+
+    const pending = await HubEarning.find({ hubId, status: 'pending' }).sort({ createdAt: 1 });
+    const available = pending.reduce((sum, e) => sum + e.commissionAmount, 0);
+    if (available <= 0) return res.status(400).json({ message: 'No commission is available to withdraw yet.' });
+
+    let requested = Number(req.body?.amount);
+    if (!Number.isFinite(requested) || requested <= 0) requested = available;
+    const amount = Math.min(requested, available);
+
+    const reference = `HB-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    const withdrawal = await HubWithdrawal.create({
+      hubId,
+      amount,
+      reference,
+      status: 'processing',
+      destination: {
+        bankName: account.bankName,
+        bankCode: account.bankCode,
+        accountNumber: account.accountNumber,
+        accountName: account.accountName,
+      },
+    });
+
+    // Consume the oldest pending credits, in order, up to the withdrawn amount.
+    let remaining = amount;
+    const consumedIds = [];
+    for (const e of pending) {
+      if (remaining <= 0) break;
+      consumedIds.push(e._id);
+      remaining = Math.round((remaining - e.commissionAmount) * 100) / 100;
+    }
+    await HubEarning.updateMany(
+      { _id: { $in: consumedIds } },
+      { status: 'withdrawn', withdrawalId: withdrawal._id },
+    );
+
+    // Attempt the Monnify single transfer. On failure the withdrawal stays in
+    // 'processing' with the provider's message so it can be retried manually.
+    const cfg = await getConfig('monnify');
+    if (cfg?.apiKey && cfg?.secretKey) {
+      try {
+        const auth = await monnifyToken();
+        if (auth?.token) {
+          const dr = await fetch(`${auth.baseUrl}/api/v1/disbursements/single`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              amount,
+              transactionReference: reference,
+              destinationBankCode: account.bankCode,
+              destinationAccountNumber: account.accountNumber,
+              destinationAccountName: account.accountName,
+              currency: cfg.currency || 'NGN',
+              narration: 'TalentriX hub commission payout',
+            }),
+          });
+          const dd = await dr.json();
+          if (dr.ok && dd.requestSuccessful) {
+            withdrawal.status = 'paid';
+            withdrawal.processedAt = new Date();
+          } else {
+            withdrawal.error = dd.responseMessage || dd.message || `Provider error (${dr.status})`;
+          }
+        } else {
+          withdrawal.error = 'Could not reach payment provider at this time.';
+        }
+      } catch (err) {
+        withdrawal.error = String(err.message || err);
+      }
+      await withdrawal.save();
+    }
+
+    res.json({ message: withdrawal.status === 'paid' ? 'Withdrawal sent to your account.' : 'Withdrawal registered — payout is processing.', withdrawal });
+  } catch (error) {
+    console.error('Hub withdraw error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ── Payment / Monnify Integration ────────────────────────────────────────────
 
 const fetch = globalThis.fetch || (() => { throw new Error('fetch not available'); });
@@ -2609,6 +2899,9 @@ const ChatPayment = mongoose.model('ChatPayment', new mongoose.Schema({
   employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   amount: { type: Number, required: true },
+  // The base unlock fee before VAT/service charge — hub commission is 25% of
+  // this base only, never of the VAT or service-charge portion.
+  baseAmount: { type: Number, default: null },
   paymentRef: { type: String, default: '' },
   monnifyRef: { type: String, default: '' },
   status: { type: String, enum: ['pending', 'paid', 'failed', 'closed'], default: 'pending' },
@@ -2631,6 +2924,58 @@ const ChatClosure = mongoose.model('ChatClosure', new mongoose.Schema({
   status: { type: String, enum: ['pending', 'done'], default: 'pending' },
   createdAt: { type: Date, default: Date.now },
   answeredAt: { type: Date },
+}));
+
+// Hub commission owed on a paid employer→seeker chat unlock. A hub earns 25%
+// of the base unlock fee when one of its pool members gets a paid chat, and
+// one reputation point for every chat the employer confirms (and agrees to
+// post) through the employment-sharing flow. Commission accrues once per paid
+// payment (chatPaymentId is unique); a withdrawal links the credits it consumed.
+const HubEarning = mongoose.model('HubEarning', new mongoose.Schema({
+  hubId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  seekerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  employerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  chatPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: 'ChatPayment', required: true, unique: true },
+  baseAmount: { type: Number, required: true },
+  commissionAmount: { type: Number, required: true },
+  status: { type: String, enum: ['pending', 'withdrawn'], default: 'pending' },
+  withdrawalId: { type: mongoose.Schema.Types.ObjectId, ref: 'HubWithdrawal', default: null },
+  createdAt: { type: Date, default: Date.now },
+}));
+
+// The naira payout account a hub wants its commission sent to. The account is
+// kept in 'pending' until the hub confirms it with the emailed code, then it
+// becomes 'active' and can receive withdrawals.
+const HubPayoutAccount = mongoose.model('HubPayoutAccount', new mongoose.Schema({
+  hubId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  bankName: { type: String, default: '' },
+  bankCode: { type: String, default: '' },
+  accountNumber: { type: String, default: '' },
+  accountName: { type: String, default: '' },
+  status: { type: String, enum: ['pending', 'active'], default: 'pending' },
+  verifiedAt: { type: Date, default: null },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
+}));
+
+// A hub's withdrawal request. It snapshots the payout destination so the record
+// stays meaningful even if the hub later swaps accounts. Status is 'processing'
+// while the Monnify transfer is attempted/awaited, 'paid' on success, or
+// 'failed' with an error string if the payment provider rejected it.
+const HubWithdrawal = mongoose.model('HubWithdrawal', new mongoose.Schema({
+  hubId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  amount: { type: Number, required: true },
+  reference: { type: String, unique: true, required: true },
+  status: { type: String, enum: ['processing', 'paid', 'failed'], default: 'processing' },
+  destination: {
+    bankName: { type: String, default: '' },
+    bankCode: { type: String, default: '' },
+    accountNumber: { type: String, default: '' },
+    accountName: { type: String, default: '' },
+  },
+  error: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  processedAt: { type: Date, default: null },
 }));
 
 // Lightweight in-app notifications. Used today to deliver the shareable
@@ -2740,6 +3085,29 @@ async function monnifyToken() {
   return { token: d.responseBody?.accessToken || null, baseUrl };
 }
 
+// Record a hub's commission on a paid chat unlock. Safe to call repeatedly —
+// each paid ChatPayment produces exactly one HubEarning. Commission is 25% of
+// the base unlock fee (never of VAT/service charge).
+async function accrueHubCommission(payment) {
+  if (!payment || !payment._id) return;
+  const existing = await HubEarning.findOne({ chatPaymentId: payment._id });
+  if (existing) return;
+  const seeker = await User.findById(payment.seekerId).select('hubId');
+  if (!seeker?.hubId) return;
+  const pricing = await getConfig('chatPricing');
+  const base = payment.baseAmount ?? pricing?.amount ?? payment.amount;
+  const commissionAmount = Math.round(base * 0.25 * 100) / 100;
+  await HubEarning.create({
+    hubId: seeker.hubId,
+    seekerId: payment.seekerId,
+    employerId: payment.employerId,
+    chatPaymentId: payment._id,
+    baseAmount: base,
+    commissionAmount,
+    status: 'pending',
+  });
+}
+
 // Query Monnify for a single transaction and update the local record's status.
 // Returns 'paid'/'failed' when confirmed, otherwise null (unknown/unreachable).
 async function syncPayment(record) {
@@ -2760,6 +3128,7 @@ async function syncPayment(record) {
     record.monnifyRef = tx.transactionReference || '';
     record.paidAt = new Date();
     await record.save();
+    await accrueHubCommission(record);
     return 'paid';
   }
   if (tx?.paymentStatus === 'FAILED') {
@@ -4229,7 +4598,7 @@ app.post('/api/payment/init', authenticateToken, async (req, res) => {
     // Create pending record
     await ChatPayment.findOneAndUpdate(
       { employerId: req.user.userId, seekerId },
-      { employerId: req.user.userId, seekerId, amount: total, paymentRef, status: 'pending' },
+      { employerId: req.user.userId, seekerId, amount: total, baseAmount: base, paymentRef, status: 'pending' },
       { upsert: true },
     );
 
@@ -4309,6 +4678,7 @@ app.post('/api/payment/webhook', async (req, res) => {
       record.monnifyRef = body.eventData?.transactionReference || '';
       record.paidAt = new Date();
       await record.save();
+      await accrueHubCommission(record);
     } else if (status === 'FAILED') {
       record.status = 'failed';
       await record.save();

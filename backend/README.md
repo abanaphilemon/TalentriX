@@ -118,6 +118,9 @@ All models are defined in `server.js`.
 | `GET` | `/api/dashboard` | Role-appropriate dashboard data |
 | `GET` | `/api/me` | Current user profile |
 | `GET` / `PUT` | `/api/profile` | Read / update own profile |
+| `POST` | `/api/profile/email/request` | Request an email change — code is emailed to the NEW address |
+| `POST` | `/api/profile/email/confirm` | Redeem the code and switch the account to the new email |
+| `POST` | `/api/profile/password` | Change password (current password required) |
 | `POST` | `/api/request-reset` | Email a password-reset code (email + role) |
 | `POST` | `/api/reset-password` | Redeem a reset code and set a new password |
 | `GET` / `PUT` | `/api/chat/keys` | Get / provision E2E keypair |
@@ -160,6 +163,10 @@ All models are defined in `server.js`.
 | `POST` | `/api/hub/grants` | Create a grant |
 | `PUT` | `/api/hub/grants/:id` | Update a grant |
 | `DELETE` | `/api/hub/grants/:id` | Delete a grant |
+| `GET` | `/api/hub/finance` | Commission (25% of base fee), reputation points, earnings & withdrawals |
+| `PUT` | `/api/hub/payout-account` | Save/update payout account (validated + code emailed) |
+| `POST` | `/api/hub/payout-account/confirm` | Confirm payout account with the emailed code |
+| `POST` | `/api/hub/withdraw` | Withdraw available commission to the payout account via Monnify |
 
 ### Employer-only
 

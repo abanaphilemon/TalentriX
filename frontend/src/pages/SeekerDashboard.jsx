@@ -40,6 +40,7 @@ import SupportCenter from '../components/SupportCenter.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import SecureChat, { fetchUnreadCount } from '../components/SecureChat.jsx';
 import AiApplyModal from '../components/AiApplyModal.jsx';
+import AccountSettings from '../components/AccountSettings.jsx';
 import { ensureKeys } from '../lib/e2e.js';
 import { readImageFile } from '../lib/image.js';
 
@@ -310,7 +311,7 @@ const ABS = {
 };
 
 export default function SeekerDashboard() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, updateUser } = useAuth();
   const { content } = useContent();
   const branding = content.branding || {};
 
@@ -1560,6 +1561,11 @@ export default function SeekerDashboard() {
                       <li className="flex gap-2"><Check className="w-4 h-4 text-primary shrink-0 mt-0.5" /> Attach your CV for the formal details.</li>
                     </ul>
                   </div>
+                </div>
+
+                {/* Account security: email change (OTP) + password */}
+                <div className="md:col-span-3">
+                  <AccountSettings user={user} token={token} onUpdated={updateUser} />
                 </div>
               </div>
             )}
