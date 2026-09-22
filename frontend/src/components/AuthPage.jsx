@@ -235,7 +235,7 @@ export default function AuthPage() {
             className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain pointer-events-none"
           >
             <div className="min-h-full flex flex-col justify-center pointer-events-none p-4">
-            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-hidden grid md:grid-cols-2">
+            <div className="glass rounded-3xl shadow-2xl w-full max-w-4xl pointer-events-auto relative overflow-x-hidden grid md:grid-cols-2">
               {/* ───── Left brand panel ───── */}
               <div className="relative bg-secondary text-tertiary p-8 md:p-10 hidden md:flex flex-col justify-between overflow-hidden">
                 {/* Decorative gold blobs */}
@@ -385,7 +385,7 @@ export default function AuthPage() {
                         shape="pill"
                         text={tab === 'login' ? 'signin_with' : 'signup_with'}
                         logo_alignment="left"
-                        width="320"
+                        width="220"
                       />
                     </div>
                   </div>

@@ -441,18 +441,18 @@ export default function HubDashboard() {
     <div className="min-h-screen bg-[#faf9f6]">
       {/* Top bar */}
       <header className="bg-white border-b border-secondary/10 sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden shrink-0">
               {branding.logo ? (
                 <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-0.5" />
               ) : (
                 <Network className="w-4 h-4 text-secondary" />
               )}
             </div>
-            <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
+            <span className="font-display font-bold text-secondary truncate">{branding.name || 'TalentriX'}</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <NotificationCenter token={token} />
             <button
               onClick={() => setSupportOpen(true)}
@@ -467,15 +467,16 @@ export default function HubDashboard() {
             </span>
             <button
               onClick={signOut}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"
+              aria-label="Log out"
+              className="inline-flex items-center justify-center gap-1.5 w-9 h-9 sm:w-auto sm:h-auto sm:px-3 sm:py-2 text-sm font-semibold text-secondary bg-secondary/5 hover:bg-secondary/10 rounded-lg transition-colors"
             >
-              <LogOut className="w-4 h-4" /> Log out
+              <LogOut className="w-4 h-4" /> <span className="hidden sm:inline">Log out</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-6 py-8">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         <div className="mb-6">
           <h1 className="font-display text-2xl md:text-3xl font-bold text-secondary">
             Talent Hub Dashboard
@@ -486,7 +487,7 @@ export default function HubDashboard() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 bg-secondary/5 p-1 rounded-xl w-fit">
+        <div className="flex flex-wrap gap-2 mb-6 bg-secondary/5 p-1 rounded-xl w-fit">
           <button
             onClick={() => setTab('grants')}
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
@@ -679,7 +680,7 @@ export default function HubDashboard() {
             )}
 
             {/* Sub-tabs */}
-            <div className="flex gap-2 mb-5 bg-secondary/5 p-1 rounded-xl w-fit">
+            <div className="flex flex-wrap gap-2 mb-5 bg-secondary/5 p-1 rounded-xl w-fit">
               {[
                 { id: 'browse', label: 'Browse' },
                 { id: 'request', label: 'Request a module' },
@@ -1196,7 +1197,7 @@ export default function HubDashboard() {
               <p className="text-xs text-secondary/40">
                 via {selectedGrant.source}
               </p>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 {selectedGrant.url && (
                   <a
                     href={selectedGrant.url}

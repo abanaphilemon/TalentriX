@@ -137,7 +137,7 @@ export default function Footer() {
           <p className="text-xs text-white/50">
             © {new Date().getFullYear()} {branding.name || 'TalentriX'}. All rights reserved.
           </p>
-          <div className="flex gap-6 text-xs text-white/50">
+          <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-white/50">
             <a href="#" className="hover:text-primary transition-colors">
               Privacy Policy
             </a>

@@ -11,8 +11,8 @@ const LogoMark = ({ branding }) => {
   const tagline = branding?.tagline || 'A · I';
   const logo = branding?.logo;
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30 overflow-hidden">
+    <div className="flex items-center gap-2 min-w-0">
+      <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30 overflow-hidden shrink-0">
         {logo ? (
           <img src={logo} alt={`${name} logo`} className="w-full h-full object-contain p-1" />
         ) : (
@@ -22,8 +22,8 @@ const LogoMark = ({ branding }) => {
         )}
         <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white" />
       </div>
-      <div className="flex flex-col leading-tight">
-        <span className="font-display font-bold text-secondary text-lg">
+      <div className="flex flex-col leading-tight min-w-0">
+        <span className="font-display font-bold text-secondary text-lg truncate">
           {name}
         </span>
         <span className="text-[10px] font-semibold tracking-widest text-secondary/60 -mt-1">

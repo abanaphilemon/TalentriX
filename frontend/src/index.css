@@ -10,6 +10,14 @@
     scroll-behavior: smooth;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Stop iOS/Android from auto-inflating text in landscape or after rotation,
+       which is a common reason a page suddenly looks "zoomed in". */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    /* Clip (not just body) so oversized decorative layers can never widen the
+       layout viewport and force the browser to auto-zoom-out on mobile. */
+    overflow-x: hidden;
+    max-width: 100%;
   }
 
   body {
@@ -20,8 +28,50 @@
       #fff8e1 50%,
       #ffe9a8 100%
     );
-    background-attachment: fixed;
     overflow-x: hidden;
+    max-width: 100%;
+    /* Long unbroken strings (emails, tokens, URLs, CMS copy) can otherwise
+       expand a flex/grid child's min-content width past the phone screen and
+       trigger a horizontal zoom. Break them instead. */
+    overflow-wrap: anywhere;
+    min-height: 100dvh;
+  }
+
+  #root {
+    overflow-x: hidden;
+    max-width: 100%;
+  }
+
+  /* Never let media force a horizontal scroll */
+  img,
+  video,
+  svg,
+  iframe,
+  object,
+  embed {
+    max-width: 100%;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Mobile Safari auto-zooms into any input/select/textarea whose font-size is
+     under 16px when it gains focus — the #1 cause of "have to pinch-zoom to
+     type". Bump form controls to 16px on small screens only, so the desktop
+     design keeps its smaller type. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+    max-width: 100%;
+  }
+  @media (min-width: 768px) {
+    input,
+    select,
+    textarea {
+      font-size: revert;
+    }
   }
 
   h1,
@@ -29,6 +79,7 @@
   h3,
   h4 {
     @apply font-display tracking-tight;
+    overflow-wrap: anywhere;
   }
 }
 

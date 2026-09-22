@@ -9,7 +9,7 @@ const PartnerTile = ({ partner, index, inView }) => (
     animate={inView ? { opacity: 1, scale: 1 } : {}}
     transition={{ duration: 0.5, delay: index * 0.08 }}
     whileHover={{ y: -6, scale: 1.03 }}
-    className="glass rounded-2xl p-8 flex flex-col items-center justify-center gap-4 cursor-pointer hover:shadow-2xl transition-shadow duration-300 aspect-square"
+    className="glass rounded-2xl p-4 sm:p-8 flex flex-col items-center justify-center gap-4 cursor-pointer hover:shadow-2xl transition-shadow duration-300 aspect-square"
   >
     {/* Logo — white circle so any brand color reads correctly */}
     <div className="w-20 h-20 rounded-full bg-white shadow-lg shadow-secondary/10 ring-1 ring-secondary/5 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">

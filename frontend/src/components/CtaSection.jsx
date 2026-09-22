@@ -31,7 +31,7 @@ export default function CtaSection() {
     <section className="relative px-6 md:px-10 lg:px-16 py-16">
       <div className="container-x">
         <FadeIn>
-          <div className="relative overflow-hidden rounded-3xl bg-secondary text-tertiary p-10 md:p-16 shadow-2xl">
+          <div className="relative overflow-hidden rounded-3xl bg-secondary text-tertiary p-6 sm:p-10 md:p-16 shadow-2xl">
             {/* Decorative gold glow */}
             <div className="pointer-events-none absolute -top-32 -right-32 w-96 h-96 rounded-full bg-primary/30 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-32 -left-32 w-96 h-96 rounded-full bg-primary/20 blur-3xl" />
@@ -49,10 +49,10 @@ export default function CtaSection() {
 
               <a
                 href="#contact"
-                className="btn-on-dark text-base px-8 py-4 whitespace-nowrap self-start md:self-center"
+                className="btn-on-dark text-base px-8 py-4 self-start md:self-center w-full sm:w-auto justify-center"
               >
                 {cta.buttonText || 'Book a Demo'}
-                <ArrowRight className="w-5 h-5" />
+                <ArrowRight className="w-5 h-5 shrink-0" />
               </a>
             </div>
           </div>

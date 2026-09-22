@@ -191,7 +191,7 @@ export default function Reviews() {
             </p>
 
             <form onSubmit={submit} className="space-y-4" noValidate>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm font-semibold text-secondary">Your rating</span>
                 <StarPicker value={rating} onChange={setRating} />
               </div>

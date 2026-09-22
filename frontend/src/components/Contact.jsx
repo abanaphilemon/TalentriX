@@ -201,37 +201,37 @@ export default function Contact() {
               <div className="space-y-5">
                 <a
                   href={`mailto:${contactInfo.email}`}
-                  className="flex items-center gap-4 group"
+                  className="flex items-center gap-4 group min-w-0"
                 >
                   <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                     <Mail className="w-5 h-5 text-secondary" />
                   </div>
                   <div>
                     <div className="text-xs text-white/60 font-medium">Email</div>
-                    <div className="font-semibold">{contactInfo.email}</div>
+                    <div className="font-semibold break-all">{contactInfo.email}</div>
                   </div>
                 </a>
 
                 <a
                   href={`tel:${contactInfo.phone.replace(/\s/g, '')}`}
-                  className="flex items-center gap-4 group"
+                  className="flex items-center gap-4 group min-w-0"
                 >
                   <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
                     <Phone className="w-5 h-5 text-secondary" />
                   </div>
                   <div>
                     <div className="text-xs text-white/60 font-medium">Phone</div>
-                    <div className="font-semibold">{contactInfo.phone}</div>
+                    <div className="font-semibold break-all">{contactInfo.phone}</div>
                   </div>
                 </a>
 
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 min-w-0">
                   <div className="w-11 h-11 rounded-xl bg-primary flex items-center justify-center shrink-0">
                     <MapPin className="w-5 h-5 text-secondary" />
                   </div>
                   <div>
                     <div className="text-xs text-white/60 font-medium">Office</div>
-                    <div className="font-semibold">{contactInfo.address}</div>
+                    <div className="font-semibold break-all">{contactInfo.address}</div>
                   </div>
                 </div>
               </div>

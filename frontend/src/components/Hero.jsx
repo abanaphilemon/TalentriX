@@ -53,7 +53,7 @@ export default function Hero() {
               initial="hidden"
               animate="show"
               custom={1}
-              className="font-display text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.05] text-secondary"
+              className="font-display text-4xl sm:text-6xl lg:text-7xl font-bold leading-[1.05] text-secondary"
             >
               {hero.titlePrefix || 'Hire '}
               <span className="text-gradient-gold">{hero.titleHighlight || 'extraordinary'}</span>
