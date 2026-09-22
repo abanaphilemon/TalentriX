@@ -48,11 +48,13 @@ export function AuthProvider({ children }) {
         const savedRole = localStorage.getItem(STORAGE.role);
         if (token && savedRole && savedRole !== 'admin') {
           const u = await validate(token);
-          if (u) {
+          if (u && u.emailVerified === true) {
             setUser(u);
             setRole(savedRole);
             registerChatKey(token);
           } else {
+            // Sessions only open after the email is verified — drop any stale
+            // pre-verification tokens so the app never opens past the OTP step.
             localStorage.removeItem(STORAGE.token);
             localStorage.removeItem(STORAGE.role);
           }
@@ -146,18 +148,8 @@ export function AuthProvider({ children }) {
         return { ok: false, error: data.message || 'Registration failed' };
       }
 
-      localStorage.setItem(STORAGE.token, data.token);
-      localStorage.setItem(STORAGE.role, data.user.role);
-      setRole(data.user.role);
-      setUser(data.user);
-      if (!data.verification?.needed) {
-        setMode('closed');
-        registerChatKey(data.token);
-      } else {
-        // Email code step at the sign-up screen — mode stays open so the OTP
-        // view can take over, but only when the user came through the modal.
-        if (mode !== 'auth') setMode('closed');
-      }
+      // Registration never opens a session: the email must be verified (OTP
+      // code) before any token is issued, so the OTP step can't be skipped.
       return { ok: true, user: data.user, verification: data.verification };
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
@@ -208,16 +200,17 @@ export function AuthProvider({ children }) {
   // 'login' mid-sign-in (that flow returns a session token to finish logging in).
   const verifyOtp = useCallback(async ({ code, purpose, email, role: roleOverride }) => {
     try {
-      const headers = { 'Content-Type': 'application/json' };
-      const token = localStorage.getItem(STORAGE.token);
-      if (token) headers.Authorization = `Bearer ${token}`;
+      // Login/registration never store a token, so the account is always
+      // resolved by email + role and the server hands back the session token
+      // on success — the session only exists after the code is verified.
       const res = await fetch(`${API_URL}/verify-otp`, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code,
           purpose,
-          ...(token ? {} : { email, role: roleOverride }),
+          email,
+          role: roleOverride,
         }),
       });
 
@@ -242,18 +235,15 @@ export function AuthProvider({ children }) {
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
     }
-  }, [user, role]);
+  }, [user]);
 
   // Ask the server for a fresh code (wrong/expired code, or a lost email).
   const resendOtp = useCallback(async ({ purpose, email, role: roleOverride }) => {
     try {
-      const headers = { 'Content-Type': 'application/json' };
-      const token = localStorage.getItem(STORAGE.token);
-      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/resend-otp`, {
         method: 'POST',
-        headers,
-        body: JSON.stringify({ purpose, ...(token ? {} : { email, role: roleOverride }) }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purpose, email, role: roleOverride }),
       });
 
       const data = await res.json();
@@ -342,8 +332,8 @@ export function AuthProvider({ children }) {
 
       if (data.verification?.needed) {
         // Brand-new Google account → the emailed verification code must be
-        // entered first (same step as email sign-up).
-        if (mode !== 'auth') setMode('closed');
+        // entered first (same step as email sign-up). No session is created
+        // until the code is verified, so the OTP step can't be skipped.
         return { ok: true, user: data.user, verification: data.verification };
       }
 
@@ -353,7 +343,7 @@ export function AuthProvider({ children }) {
     } catch (err) {
       return { ok: false, error: 'Could not connect to server. Please try again.' };
     }
-  }, [role, mode]);
+  }, [role]);
 
   const signOut = useCallback(() => {
     teardownPush(localStorage.getItem(STORAGE.token)).catch(() => {});

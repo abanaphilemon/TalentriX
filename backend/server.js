@@ -1258,18 +1258,13 @@ app.post('/api/auth/google', async (req, res) => {
     await provisionKeys(user);
     if (role === 'hub') await syncSitePartner(user);
 
-    const token = jwt.sign(
-      { userId: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    // New accounts must verify their email with a code before onboarding.
+    // New accounts must verify their email with a code before onboarding. A
+    // session token is only issued after the code is entered (verify-otp),
+    // so nothing opens until the email is verified.
     const { sent } = await sendOtpEmail(user, 'verify');
 
     res.status(201).json({
       message: 'User registered successfully',
-      token,
       user: publicUser(user),
       verification: { needed: true, sent },
     });
@@ -1388,18 +1383,13 @@ app.post('/api/register', async (req, res) => {
       await syncSitePartner(user);
     }
 
-    const token = jwt.sign(
-      { userId: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    // New accounts must verify their email with a code before onboarding.
+    // New accounts must verify their email with a code before onboarding. A
+    // session token is only issued after the code is entered (verify-otp),
+    // so nothing opens until the email is verified.
     const { sent } = await sendOtpEmail(user, 'verify');
 
     res.status(201).json({
       message: 'User registered successfully',
-      token,
       user: publicUser(user),
       verification: { needed: true, sent },
     });
@@ -1450,7 +1440,7 @@ app.post('/api/login', async (req, res) => {
         message: 'Enter the code sent to your email to continue.',
         requiresOtp: true,
         purpose: 'login',
-        email: maskEmail(user.email),
+        email: user.email,
         sent,
       });
     }
@@ -1473,9 +1463,9 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// Verify an emailed code (account activation or login 2FA). Returns a fresh
-// token for the login flow; for activation it returns the updated user — the
-// session token from registration is already in the client's hands.
+// Verify an emailed code (account activation or login 2FA). Login/registration
+// never hand out a session token up front, so the account is resolved by email
+// + role here and a fresh token is issued after the code checks out.
 app.post('/api/verify-otp', async (req, res) => {
   try {
     const { code, purpose } = req.body || {};

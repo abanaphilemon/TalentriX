@@ -198,7 +198,7 @@ export default function AuthPage() {
         return;
       }
       if (res.verification?.needed) {
-        setOtp({ purpose: 'verify', email: '', sent: res.verification.sent, role });
+        setOtp({ purpose: 'verify', email: res.user?.email || '', sent: res.verification.sent, role: res.user?.role || role });
       } else if (res.requiresOtp) {
         setOtp({ purpose: res.purpose || 'login', email: res.email, sent: res.sent, role });
       }

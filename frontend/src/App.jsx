@@ -259,7 +259,7 @@ function LandingPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user && role && DASHBOARDS[role]) {
+    if (user && role && DASHBOARDS[role] && user.emailVerified === true) {
       if (user.status === 'approved' && user.active !== false) {
         navigate(needsOnboardingFlow(role) && !user.onboardingDone ? '/onboarding' : DASHBOARDS[role], { replace: true });
       }
