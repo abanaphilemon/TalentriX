@@ -48,17 +48,13 @@ export default function Footer() {
           {/* ───── Brand column ───── */}
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30 overflow-hidden">
-                {branding.logo ? (
+              {branding.logo ? (
+                <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30 overflow-hidden shrink-0">
                   <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-1" />
-                ) : (
-                  <span className="text-secondary font-display font-bold text-lg leading-none">
-                    TB
-                  </span>
-                )}
-              </div>
+                </div>
+              ) : null}
               <span className="font-display font-bold text-lg text-tertiary">
-{branding.name || 'TalentriX'}
+                {branding.name || 'TalentriX'}
               </span>
             </div>
             <p className="text-sm text-white/60 leading-relaxed">

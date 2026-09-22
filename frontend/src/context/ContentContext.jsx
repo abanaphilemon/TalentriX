@@ -7,6 +7,7 @@ import {
   contactInfo as defaultContactInfo,
   images as defaultImages,
 } from '../data/content.js';
+import { applyBrandFavicon } from '../lib/branding.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -134,6 +135,12 @@ export function ContentProvider({ children }) {
       active = false;
     };
   }, [merge]);
+
+  // Keep the favicon / home-screen icon identical to the header logo that was
+  // set in the admin panel — same source, updated simultaneously.
+  useEffect(() => {
+    applyBrandFavicon(content.branding?.logo);
+  }, [content.branding?.logo]);
 
   const refresh = useCallback(async () => {
     try {

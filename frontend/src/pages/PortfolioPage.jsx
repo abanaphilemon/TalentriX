@@ -27,6 +27,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useContent } from '../context/ContentContext.jsx';
+import BrandBadge from '../components/BrandBadge.jsx';
 import SecureChat from '../components/SecureChat.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -294,17 +295,8 @@ export default function PortfolioPage() {
             >
               <ArrowLeft className="w-4 h-4" />
             </button>
-            <Link to="/" className="inline-flex items-center gap-2 group">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden shadow-md shadow-primary/40">
-              {branding.logo ? (
-                <img src={branding.logo} alt="" className="w-full h-full object-contain p-0.5" />
-              ) : (
-                <Sparkles className="w-4 h-4 text-black" />
-              )}
-            </div>
-            <span className="font-display font-bold tracking-tight group-hover:text-primary transition-colors">
-              {branding.name || 'TalentriX'}
-            </span>
+            <Link to="/" className="inline-flex items-center gap-2 group min-w-0">
+              <BrandBadge branding={branding} size="sm" />
             </Link>
           </div>
           <nav className="flex items-center gap-2">

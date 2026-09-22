@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import BrandBadge from '../components/BrandBadge.jsx';
 import OtpEntry from '../components/OtpEntry.jsx';
 
 export default function RegisterPage() {
@@ -244,15 +245,8 @@ function AuthShell({ children }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-hero-gradient">
       <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-5 sm:p-8">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center overflow-hidden">
-            {branding.logo ? (
-              <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-1.5" />
-            ) : (
-              <Network className="w-5 h-5 text-secondary" />
-            )}
-          </div>
-          <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
+        <div className="mb-6">
+          <BrandBadge branding={branding} size="lg" pad="p-1.5" textCls="text-lg" />
         </div>
         {children}
       </div>

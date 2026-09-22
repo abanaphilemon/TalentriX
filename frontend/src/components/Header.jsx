@@ -5,23 +5,19 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
 import PwaInstall from './PwaInstall.jsx';
 
-// Logo mark — brand logo (or "TB" fallback) with gold accent
+// Logo mark — brand logo from the admin panel with gold accent
 const LogoMark = ({ branding }) => {
   const name = branding?.name || 'TalentriX';
   const tagline = branding?.tagline || 'A · I';
   const logo = branding?.logo;
   return (
     <div className="flex items-center gap-2 min-w-0">
-      <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30 overflow-hidden shrink-0">
-        {logo ? (
+      {logo ? (
+        <div className="relative w-9 h-9 rounded-xl bg-secondary flex items-center justify-center shadow-lg shadow-secondary/30 overflow-hidden shrink-0">
           <img src={logo} alt={`${name} logo`} className="w-full h-full object-contain p-1" />
-        ) : (
-          <span className="text-primary font-display font-bold text-lg leading-none">
-            TB
-          </span>
-        )}
-        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white" />
-      </div>
+          <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white" />
+        </div>
+      ) : null}
       <div className="flex flex-col leading-tight min-w-0">
         <span className="font-display font-bold text-secondary text-lg truncate">
           {name}

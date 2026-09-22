@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Network,
   Copy,
   Check,
   LogOut,
@@ -35,6 +34,7 @@ import { useContent } from '../context/ContentContext.jsx';
 import { readImageFile } from '../lib/image.js';
 import NotificationCenter from '../components/NotificationCenter.jsx';
 import SupportCenter from '../components/SupportCenter.jsx';
+import BrandBadge from '../components/BrandBadge.jsx';
 import HubFinance from '../components/HubFinance.jsx';
 import AccountSettings from '../components/AccountSettings.jsx';
 
@@ -442,16 +442,7 @@ export default function HubDashboard() {
       {/* Top bar */}
       <header className="bg-white border-b border-secondary/10 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden shrink-0">
-              {branding.logo ? (
-                <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-0.5" />
-              ) : (
-                <Network className="w-4 h-4 text-secondary" />
-              )}
-            </div>
-            <span className="font-display font-bold text-secondary truncate">{branding.name || 'TalentriX'}</span>
-          </div>
+          <BrandBadge branding={branding} />
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <NotificationCenter token={token} />
             <button

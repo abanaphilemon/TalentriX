@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useContent } from '../context/ContentContext.jsx';
+import BrandBadge from '../components/BrandBadge.jsx';
 import { readImageFile } from '../lib/image.js';
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
@@ -538,14 +539,7 @@ function Topbar({ branding, user, signOut }) {
     <header className="bg-white border-b border-secondary/10 sticky top-0 z-20">
       <div className="max-w-4xl mx-auto px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center overflow-hidden">
-            {branding.logo ? (
-              <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-0.5" />
-            ) : (
-              <Network className="w-4 h-4 text-secondary" />
-            )}
-          </div>
-          <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
+          <BrandBadge branding={branding} />
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm text-secondary/60 hidden sm:inline">{user?.name || user?.email}</span>
@@ -565,15 +559,8 @@ function Shell({ branding, children }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-hero-gradient">
       <div className="glass rounded-3xl shadow-2xl w-full max-w-md p-5 sm:p-8">
-        <div className="flex items-center gap-2 mb-6">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center overflow-hidden">
-            {branding.logo ? (
-              <img src={branding.logo} alt="logo" className="w-full h-full object-contain p-1.5" />
-            ) : (
-              <Network className="w-5 h-5 text-secondary" />
-            )}
-          </div>
-          <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
+        <div className="mb-6">
+          <BrandBadge branding={branding} size="lg" pad="p-1.5" textCls="text-lg" />
         </div>
         {children}
       </div>

@@ -1,6 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Network, ScrollText } from 'lucide-react';
+import { ArrowLeft, ScrollText } from 'lucide-react';
 import { useContent } from '../context/ContentContext.jsx';
+import BrandBadge from '../components/BrandBadge.jsx';
 
 const LAST_UPDATED = 'September 17, 2026';
 
@@ -66,16 +67,7 @@ export default function TermsPage() {
     <div className="min-h-screen bg-hero-gradient px-4 py-10">
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center overflow-hidden">
-              {branding.logo ? (
-                <img src={branding.logo} alt={`${branding.name || 'TalentriX'} logo`} className="w-full h-full object-contain p-1.5" />
-              ) : (
-                <Network className="w-5 h-5 text-secondary" />
-              )}
-            </div>
-            <span className="font-display font-bold text-secondary">{branding.name || 'TalentriX'}</span>
-          </div>
+          <BrandBadge branding={branding} size="lg" pad="p-1.5" />
           <button
             onClick={() => navigate('/', { replace: true })}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white/80 border border-secondary/10 text-secondary text-sm font-semibold hover:bg-white transition-colors"
